@@ -35,19 +35,10 @@ const journey = createJourney(stage, manifest, {
    * 档位判定用的是「相对基准的倍率」，所以换设备只需要改这一个数。
    */
   speedBase: 260,
-  /**
-   * `&exit=sweep` / `&exit=recede` 钉死图的退场方式。
-   * 默认 auto：指针慢的往后飞走，快的迎面掠过。
-   */
-  imageExit:
-    params.get('exit') === 'sweep' || params.get('exit') === 'recede'
-      ? (params.get('exit') as 'sweep' | 'recede')
-      : 'auto',
   forceTier: tier,
-  hint: '移动鼠标 = 推进航段 · 划得快 = 放行更多层 · 点一下 = 钉住那张',
   onEnterCruise() {
     document.body.dataset.view = 'cruise'
-    setHint('移动鼠标推进光隧 · Esc 退回星图', true)
+    setHint('左右划或按 ←→ 前进后退 · Esc 退回星图', true)
   },
   onBackToMap() {
     document.body.dataset.view = 'map'
@@ -146,31 +137,67 @@ if (params.get('freeze') === '1') {
 }
 
 /**
- * `?pin=1` 验「点图钉住」。
+ * `?zoom=1`（旧名 `?pin=1`）验「点环心的照片放大」。
  *
- * 先像读者那样动鼠标，让图在光标那儿长出来；停手，再在那个位置点一下 ——
- * 那张图就该留在原地不走。
+ * 照片停在**当前环的环心** —— 位置从 debug 读，不猜。
  */
-if (params.get('pin') === '1') {
-  let x = window.innerWidth * 0.36
-  const y = window.innerHeight * 0.44
-  let n = 0
-  const move = () => {
+if (params.get('zoom') === '1' || params.get('pin') === '1') {
+  setTimeout(() => {
+    const c = journey.debug().cruise
     const canvas = cruiseCanvas()
-    if (!canvas || n >= 14) {
-      // 停手，等图长完，再点它
-      setTimeout(() => {
-        canvas?.dispatchEvent(new PointerEvent('pointerdown', { clientX: x, clientY: y, bubbles: true }))
-        canvas?.dispatchEvent(new PointerEvent('pointerup', { clientX: x, clientY: y, bubbles: true }))
-      }, 260)
-      return
+    if (!c || !canvas) return
+    const r = canvas.getBoundingClientRect()
+    canvas.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        clientX: r.left + c.axis[0],
+        clientY: r.top + c.axis[1],
+        bubbles: true,
+      }),
+    )
+  }, 700)
+}
+
+/**
+ * `?warp=0.5` 定格在**穿越进度** 0.5 处。
+ *
+ * headless 里帧率不稳，按毫秒定时会落到进度不对的地方 ——
+ * 按进度定格才是可复现的。
+ */
+const warpAt = Number(params.get('warp') ?? NaN)
+if (Number.isFinite(warpAt)) {
+  const poll = setInterval(() => {
+    const c = journey.debug().cruise
+    if (c && c.warp >= warpAt) {
+      clearInterval(poll)
+      journey.freeze()
     }
-    n++
-    x += 18
-    canvas.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }))
-    requestAnimationFrame(move)
-  }
-  requestAnimationFrame(move)
+  }, 25)
+}
+
+/**
+ * `?step=N` 前进 N 站 —— 走光速穿越。
+ * `?back=N` 后退 N 站。
+ *
+ * 用来截「穿越中」那一帧：配 `?freeze=1&freezeAt=450`
+ * （450ms 正好是 0.9s 穿越的正中间），画面会停在那束光里。
+ */
+const stepN = Math.max(0, Math.floor(Number(params.get('step') ?? 0)))
+const backN = Math.max(0, Math.floor(Number(params.get('back') ?? 0)))
+if (stepN > 0 || backN > 0) {
+  setTimeout(() => {
+    const acts: (() => void)[] = []
+    for (let i = 0; i < stepN; i++) acts.push(() => journey.next())
+    for (let i = 0; i < backN; i++) acts.push(() => journey.prev())
+    acts.forEach((fn, i) => {
+      setTimeout(() => {
+        fn()
+        // 定格跟着跳走 —— freezeAt 从「跳下去那一刻」算
+        if (params.get('freeze') === '1') {
+          setTimeout(() => journey.freeze(), Number(params.get('freezeAt') ?? 450))
+        }
+      }, i * 1100)
+    })
+  }, 400)
 }
 
 /**
@@ -197,9 +224,10 @@ function paintInner() {
     const c = journey.debug().cruise
     if (!c) return
     readout.textContent =
-      `第 ${String(c.seg + 1).padStart(2, '0')} 段 · 段内进度 ${c.u.toFixed(2)} · 穿越 ${c.warp >= 0 ? `${(c.warp * 100).toFixed(0)}%` : '—'}\n` +
-      `速度 ${c.speed.toFixed(0)}px/s · 档 ${c.tier.toFixed(2)} · 在场 ${c.count} 条 · 累计位移 ${c.travel.toFixed(0)}px\n` +
-      `轴心 ${c.axis[0].toFixed(0)},${c.axis[1].toFixed(0)}`
+      `第 ${String(c.seg + 1).padStart(2, '0')} 段 · 位置 ${c.pos.toFixed(2)} · 穿越 ${c.warp >= 0 ? `${(c.warp * 100).toFixed(0)}%` : '—'}\n` +
+      `速度 ${c.speed.toFixed(0)}px/s · 档 ${c.tier.toFixed(2)} · 在场 ${c.count} 环\n` +
+      `前台 ${c.axis[0].toFixed(0)},${c.axis[1].toFixed(0)} · 消失点 ${c.vanish[0].toFixed(0)},${c.vanish[1].toFixed(0)}\n` +
+      c.rings.map((r) => `#${r.no} ${r.title}  r${r.r.toFixed(0)}  a${r.a.toFixed(2)}`).join('\n')
     return
   }
   const d = journey.debug().map

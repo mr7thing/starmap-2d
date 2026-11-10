@@ -20,7 +20,7 @@
  * 二级光隧是 Canvas 2D。**零运行时依赖。**
  */
 
-import { createCruise, type CruiseOptions, type CruiseDebug, type ImageExit } from './cruise.ts'
+import { createCruise, type CruiseOptions, type CruiseDebug } from './cruise.ts'
 import { createMapView, type MapOptions, type MapView } from './map.ts'
 import { validateManifest, type Manifest, type Tier } from './types.ts'
 
@@ -31,8 +31,6 @@ export interface JourneyOptions extends MapOptions {
    * 档位判定用的是「相对基准的倍率」，所以换设备只需要改这一个数。
    */
   speedBase?: number
-  /** 图退场的方式。默认 `auto` —— 慢的时候往后飞走，快的时候迎面掠过。 */
-  imageExit?: ImageExit
   /** 强制档位。给自动化与截图用；不传就由指针速度决定。 */
   forceTier?: Tier | null
   /** 开场提示语。不给就不显示 —— 库里不替宿主说话。 */
@@ -56,6 +54,10 @@ export interface Journey {
   goto(i: number): void
   /** 回到星图 */
   toMap(): void
+  /** 巡航里前进一站（走光速穿越） */
+  next(): void
+  /** 巡航里后退一站（走光速穿越） */
+  prev(): void
   /**
    * 定格：把时间掐成 0，整个场景停住。
    *
@@ -124,24 +126,26 @@ html[data-sm2-outline] .sm2-label{outline:1px solid #ff2d55 !important;backgroun
   font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
 .sm2-cruise__canvas{display:block;width:100%;height:100%;cursor:none}
 
-/* 文字是**固定面板**，不占隧道宽度 —— 否则一屏装不下一站，
-   看不见下一站就感觉不到速度，里程尺也就没有参照物了。 */
+/* 文字块在**环的右边**。
+   一级星图从左往右读，文字跟着环走才是一件事 —— 环往左上排，
+   右边空出来给文字，视线不用来回折返。 */
 .sm2-cruise__panel{
-  position:absolute;left:28px;top:50%;transform:translateY(-50%);
-  width:min(240px,calc(100vw - 56px));display:flex;flex-direction:column;gap:7px;
+  position:absolute;right:28px;top:50%;transform:translateY(-50%);
+  width:min(260px,calc(100vw - 56px));display:flex;flex-direction:column;gap:7px;
   pointer-events:none;
 }
 /* 逐行浮现由渲染时钟驱动（见 cruise.ts），
    这里的初始状态只负责「没亮之前别占位」 */
 .sm2-cruise__panel > *{opacity:0;transform:translateY(6px)}
 .sm2-cruise__no{font-size:10px;letter-spacing:.2em;color:#4f83b4}
+.sm2-cruise__title{font-size:16px;line-height:1.4;color:#e4f3ff;margin-top:2px}
 .sm2-cruise__lead{font-size:11.5px;line-height:1.75;color:#9dc2e0;margin-top:4px}
 .sm2-cruise__role{font-size:10.5px;line-height:1.7;color:#6f9fc8}
 
 /* 里程尺 —— 海图上量程的老做法：刻度 + 游标 + 下一站。
    一屏两站靠透视，但「还剩几站」是数，得有一条尺子说清楚。 */
 .sm2-cruise__gauge{
-  position:absolute;left:28px;bottom:52px;width:min(240px,calc(100vw - 56px));height:1px;
+  position:absolute;right:28px;bottom:52px;width:min(260px,calc(100vw - 56px));height:1px;
   background:rgba(79,131,180,.28);
 }
 .sm2-cruise__tick{position:absolute;top:-4px;width:1px;height:9px;background:rgba(79,131,180,.55)}
@@ -163,18 +167,22 @@ html[data-sm2-outline] .sm2-label{outline:1px solid #ff2d55 !important;backgroun
 }
 .sm2-cruise__warp.is-on{opacity:1}
 .sm2-cruise__read{
-  position:absolute;right:24px;bottom:20px;font-size:10px;line-height:1.85;color:#5b8cb8;
-  white-space:pre;text-align:right;
+  position:absolute;left:24px;bottom:20px;font-size:10px;line-height:1.85;color:#5b8cb8;
+  white-space:pre;text-align:left;
   font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 .sm2-cruise__hint{
-  position:absolute;left:50%;top:22px;transform:translateX(-50%);
+  position:absolute;left:50%;bottom:26px;transform:translateX(-50%);
   font-size:10.5px;letter-spacing:.18em;color:#3f6f9c;transition:opacity .5s ease;
   font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 .sm2-cruise__sr{
   position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;
 }
+/* 照片拿到眼前时，文字块和里程尺让开 */
+.sm2-cruise__panel,.sm2-cruise__gauge{transition:opacity .18s ease}
+.sm2-cruise.is-zoomed .sm2-cruise__panel,
+.sm2-cruise.is-zoomed .sm2-cruise__gauge{opacity:0}
 `
 
 function ensureStyle(): void {
@@ -218,7 +226,6 @@ export function createJourney(
     if (!cruise) {
       const cruiseOpts: CruiseOptions = {
         speedBase: options.speedBase,
-        imageExit: options.imageExit,
         forceTier: options.forceTier,
         hint: options.hint,
         debug: options.debug,
@@ -305,6 +312,26 @@ export function createJourney(
     for (const l of listeners) if (l.ev === ev) l.cb(view, index)
   }
 
+  /**
+   * 方向键 = 前进 / 后退。
+   *
+   * 只在光隧里生效，且放过输入框 —— 宿主页面里可能有搜索框，
+   * 库不该抢它的方向键。
+   */
+  function onKey(e: KeyboardEvent): void {
+    if (current !== 'cruise' || !cruise) return
+    const t = e.target as HTMLElement | null
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+    if (e.key === 'ArrowRight') {
+      cruise.forward()
+      e.preventDefault()
+    } else if (e.key === 'ArrowLeft') {
+      cruise.back()
+      e.preventDefault()
+    }
+  }
+  window.addEventListener('keydown', onKey)
+
   return {
     manifest,
     get view() {
@@ -325,6 +352,12 @@ export function createJourney(
       options.onBackToMap?.()
       emit('view', current)
     },
+    next() {
+      cruise?.forward()
+    },
+    prev() {
+      cruise?.back()
+    },
     freeze() {
       cruise?.freeze()
     },
@@ -339,6 +372,7 @@ export function createJourney(
       cancelAnimationFrame(raf)
       ro.disconnect()
       window.removeEventListener('resize', fit)
+      window.removeEventListener('keydown', onKey)
       map.dispose()
       cruise?.dispose()
       container.classList.remove('sm2-root')
@@ -349,7 +383,6 @@ export function createJourney(
 
 export { validateManifest, ManifestError } from './types.ts'
 export type { Manifest, Station, ImageRef, Tier } from './types.ts'
-export type { ImageExit } from './cruise.ts'
 export { layoutStations, hash01, fitView } from './layout.ts'
 export type { LayoutOptions, Placed, Frame } from './layout.ts'
 export { CHART_INK, createChart } from './chart.ts'

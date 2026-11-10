@@ -1,35 +1,49 @@
 /**
- * 二级 · 光隧 —— 2D 版的巡航。
+ * 二级 · 光隧 —— 一串项目环往深处排。
  *
  * ## 一句话
  *
- * 你在看哪儿，隧道就朝哪儿开；划得越快，环冲得越快、内容从眼前掠过；
- * 划得慢，它就停在半路等你看。
+ * 隧道里挂着 4 个环：最近那个是**现在这一站**，后面几个是**接下来要去的**。
+ * 每个环都是一个徽章 —— 外弧是活动名字，内弧是时间地点，环心是那张照片。
+ *
+ * ## 环**排**成一行，不是同心圆
+ *
+ * 早先的版本是同心套叠的圆。数学上没错（`r = K / z`），但画出来没法看：
+ * 四层弧形字半径不同、角度相同，全挤在正中，照片一盖就只剩一个字。
+ *
+ * 现在：环往**左上方**排成一行，越远越小、越淡，中心点朝消失点收。
+ * 于是每一环都读得清 —— 最近那环的照片在正中，后面几环的照片往左上错开，
+ * 谁也不压谁。走位变的是**环**，不是照片。
+ *
+ * ```
+ *      ◎ ◎ ◎        ← 越远越小、越淡
+ *     ◎ ◎ ◎
+ *    ◎ ◎ ◎
+ *      ◎            ← 现在这一站：照片在环心
+ * ```
+ *
+ * ## 跳站 = 整行环朝镜头长一格
+ *
+ * `pos` 是「隧道位置」，浮点站号。当前环在 `pos` 上，深度偏移是 `k - pos`。
+ *
+ * 跳站时 `pos` 从 `seg` 走到 `seg ± 1`：
+ * 最前的环胀大冲出画幅，下一个环长大成新的最前环，末尾从深处补一个新的环进来。
+ *
+ * **没有任何照片在飞** —— 照片是跟着环走的，跳站时照片淡出、淡入，不做位移。
  *
  * ## 一切只由深度决定
  *
- * 屏幕上每个东西的位置都来自一条式子：**r = K / z**（z 是深度，r 是屏幕半径）。
+ * 屏幕上每个东西的位置都来自一条式子：**r = K / z**（z 是深度，r 是屏幕半径），
+ * 环心的位置则是 **`c = VP + (axis - VP) × (r / r₀)`** —— 半径缩到几成，环心就朝消失点收几成。
  *
- * 这条 1/z 律就是「隧道」的全部来源 ——
- * 远处的环挤在消失点成一小簇，近处的环撑满画幅，一眼就看出这是穿过的东西，
- * 而不是雷达屏上等距的同心圆。
- *
- * 内容也挂在同一根线上：它在 z = Z_FAR 诞生，一路朝你冲过来，
- * 半径自己胀大，到达近平面时按你的速度决定是**掠过飞走**还是**退远**。
- *
- * ## 项目环
- *
- * 每一站外面套一个环：**上弧走站名，下弧走时间地点**，两边字都正着念。
- * 环从远处来 → 停住让人读 → 冲过去。停住那一段是这一站的「读图时间」。
- *
- * 环上字会压到浅色的照片上（海报、课堂照），所以每个字描一圈深色边 ——
- * 是字缘，不是底板。
+ * 这两条式子合起来就是「隧道」的全部来源：远处的一小簇挤在消失点，
+ * 近处的一个撑满画幅，一眼就看出这是穿过的东西，而不是雷达屏上等距的同心圆。
  *
  * ## 三条规矩（和三维版一致）
  *
  * 1. 档位由指针速度决定：慢 = 只放行 highlight，快 = overview / details 也放行。
  * 2. 图的死活由读者决定：读者移速决定流速，流速决定它冲多快、什么时候走。
- * 3. 点一下 = 钉住那一张：它停在那个深度上，并拿到眼前来看。
+ * 3. 点一下环心的照片 = 把那张照片拿到眼前来看。
  *
  * ## 确定性
  *
@@ -46,31 +60,56 @@ import type { Manifest, Station, Tier } from './types.ts'
 // --- 透视深度律 ---
 /** 诞生半径（像素） */
 const R0 = 40
-/** 诞生深度 */
-const Z_FAR = 20
 /** 投影常数：r = K / z */
-const K = R0 * Z_FAR
-/** 最近深度（近平面） */
+const K = R0 * 20
+/** 近平面：比它更近的东西不在画幅里 */
 const Z_NEAR = 0.7
 /** 出了这个半径就出画 */
 const R_MAX = K / Z_NEAR
-/** 内容高度 = 半径 × SIZE_K（贴在管壁上，角尺寸不变） */
-const SIZE_K = 0.44
-/** 钉住后拿到眼前的高度占比 */
-const READ_SIZE = 0.46
-/** 掠过时的淡出带（占 R_MAX 的比例）：起 / 止 */
-const FADE_START = 0.55
-const FADE_END = 0.95
-/** 转向深度：图冲到这么浅就决定是掠过还是退远 */
-const Z_TURN = 2.2
+
+// --- 环序列 ---
+/** 同时挂在隧道里的环数（当前 + 后面几个） */
+const RING_COUNT = 4
+/**
+ * 相邻两环的深度差 —— **相对当前深度**的比例，不是绝对值。
+ *
+ * 之前写成绝对值 2.2 是错的：当前深度 z₀ = K / r₀ 在 2～3 之间，
+ * 2.2 的绝对步长几乎不改变深度，四个环半径一模一样，等于只画了一个环。
+ * 相对步长才与画幅无关：0.62 → 半径比 1 : 0.62 : 0.46 : 0.35。
+ */
+const RING_SEQ_DZ = 0.62
+/** 环心的照片：半对角线占环半径的比例 */
+const PHOTO_K = 0.92
+/** 环上的字：外弧走站名、内弧走序号时间地点 */
+const RING_TEXT_OUT = 0.1
+const RING_TEXT_IN = 0.11
+/** 字号占环半径的比例 */
+const RING_TITLE_K = 0.085
+const RING_META_K = 0.052
+/** 弧形字最多能占多少弧度（太长就缩字号，不然首尾相接叠成一坨） */
+const TITLE_SPAN = Math.PI * 0.62
+const META_SPAN = Math.PI * 0.55
+
+// --- 行进方向 ---
+/**
+ * 环往哪个方向排（弧度，屏幕坐标 y 向下）。3.05 ≈ 正左偏下一点。
+ *
+ * 为什么不是「左上」：弧形字都架在环的**上边**。
+ * 环往左上一排，远环的上边正好压在当前环的上边 —— 四层字叠成一团。
+ * 改成几乎正左，远环的上边就一路降到左下角，各层各占一档。
+ */
+const ROW_ANGLE = 3.05
+/** 消失点离当前环多远（当前环半径的倍数） */
+const VP_DIST = 1.6
 
 // --- 隧道丝网 ---
-/** 环在深度上的等距间隔（等距 → 屏幕上自然往消失点聚拢） */
-const RING_DZ = 0.7
-/** 丝网最深到哪儿 */
-const Z_RING_FAR = 7.7
+/** 肋环的深度步长（相对当前深度） */
+const MESH_STEP = 0.55
+/** 肋环的深度范围 */
+const MESH_FROM = -1.05
+const MESH_TO = 6.4
 /** 纵向线条数（基础值，档位会加） */
-const MERIDIANS = 6
+const MERIDIANS = 7
 
 // --- 流速 ---
 /** 静止时的流速（深度/秒）：保证画面永远在动，不会冻住 */
@@ -80,49 +119,11 @@ const VZ_K = 0.02
 /** 指针速度上限 */
 const SPEED_MAX = 1500
 
-// --- 发射与推进 ---
-/** 指针每走多远放一条内容 */
-const SPAWN_PX = 36
-/** 指针累计走多远推进一段 */
-const SEG_PX = 620
+// --- 跳站 ---
 /** 光速穿越时长（秒） */
 const WARP_TIME = 0.9
-/** 在场内容上限 */
-const MAX_ITEMS = 16
-
-// --- 退场 ---
-/** 掠过时的额外推进（深度/秒）。故意不快 —— 1/z 律下最后那点深度是屏幕空间的猛冲。 */
-const SWEEP_V = 3
-/** 掠过时的横向甩动（弧度/秒） */
-const SWEEP_TURN = 3.4
-/** 退远时的反向流速（深度/秒） */
-const RECEDE_V = 24
-
-// --- 钉住 ---
-const PIN_RADIUS = 110
-const CLICK_SLOP = 8
-
-// --- 项目环 ---
-/** 环出场时的深度 */
-const RING_FAR = 6
-/** 环停住的深度（这一段就在这儿让人读） */
-const RING_READ = 2.3
-/** 环冲过去的深度 */
-const RING_NEAR = 0.8
-/** 环停住时的半径占画幅短边的比例。
- *  0.42 会让上弧的站名贴到画幅顶边（再被指针一带就出画），0.38 留得住。 */
-const RING_READ_K = 0.38
-/** 环上的字：外弧走站名、内弧走时间地点。偏移与字号都按环半径走 */
-const RING_TEXT_OUT = 0.09
-const RING_TEXT_IN = 0.09
-const RING_TITLE_K = 0.09
-const RING_META_K = 0.058
-
-/** 黄金角：内容的角度按它散开，环上才铺得匀 */
-const GOLDEN = 2.39996323
-
-/** 左侧文字面板的宽度 —— 视野中心要给它让开 */
-const PANEL_W = 240
+/** 指针横向划过多少像素算跳一站 */
+const JUMP_PX = 240
 
 // ---------------------------------------------------------------------------
 // 确定性随机
@@ -139,30 +140,20 @@ function rng(seed: number): () => number {
   }
 }
 
-/** 用种子洗牌（Fisher–Yates），不碰原数组 */
-function shuffled<T>(arr: readonly T[], seed: number): T[] {
-  const out = arr.slice()
-  const r = rng(seed)
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = (r() * (i + 1)) | 0
-    const t = out[i]!
-    out[i] = out[j]!
-    out[j] = t
-  }
-  return out
-}
-
 function smoother(t: number): number {
   const x = Math.min(1, Math.max(0, t))
   return x * x * x * (x * (x * 6 - 15) + 10)
 }
 
+/** 标准 smoothstep */
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+
 // ---------------------------------------------------------------------------
 // 类型
 // ---------------------------------------------------------------------------
-
-/** 图的退场方式 */
-export type ImageExit = 'auto' | 'sweep' | 'recede'
 
 export interface CruiseOptions {
   /**
@@ -171,8 +162,6 @@ export interface CruiseOptions {
    * 档位判定用的是「相对基准的倍率」，所以换设备只需要改这一个数。
    */
   speedBase?: number
-  /** 图退场的方式。默认 `auto` —— 慢的时候往后飞走，快的时候迎面掠过。 */
-  imageExit?: ImageExit
   /** 强制档位。给自动化与截图用；`null` 表示由指针速度决定。 */
   forceTier?: Tier | null
   /** 开局落在第几站 */
@@ -183,56 +172,67 @@ export interface CruiseOptions {
   hint?: string
 }
 
-interface Trail {
-  x: number
-  y: number
-  s: number
-}
-
-interface Item {
-  src: string
-  tier: Tier
-  ang: number
-  /** 掠过时往自己那一侧甩出去，不往轴心压 */
-  dir: number
+/** 隧道里的一个环 */
+interface Ring {
+  /** 这一环代表的站（0 起） */
+  k: number
+  /** 站序号（1 起） */
+  no: number
+  st: Station
+  /** 深度偏移：0 = 前台，正 = 更深 */
+  off: number
+  /** 深度 */
   z: number
-  age: number
-  /** 0 冲来 / 1 退场 */
-  phase: 0 | 1
-  mode: 'sweep' | 'recede' | null
-  pinned: boolean
-  pinT: number
-  /** 拖影：沿真实走过的路径留的几帧 */
-  trail: Trail[]
+  /** 屏幕半径 */
+  r: number
+  /** 环心 */
+  cx: number
+  cy: number
+  /** 不透明度 */
+  a: number
+  /** 环心照片（这一环没有图时为 null） */
+  src: string | null
+  /** 照片的不透明度（穿越时淡出淡入） */
+  pa: number
 }
 
 export interface CruiseDebug {
+  /** 当前站 */
   seg: number
-  u: number
+  /** 隧道位置（浮点站号） */
+  pos: number
   tier: number
   speed: number
-  travel: number
   warp: number
+  /** 在场环数 */
   count: number
+  /** 前台环心 */
   axis: [number, number]
-  items: { src: string; z: number; x: number; y: number; pinned: boolean }[]
+  /** 消失点 */
+  vanish: [number, number]
+  rings: { no: number; title: string; off: number; z: number; r: number; a: number }[]
+  /** 放大看的那张照片 */
+  zoomed: string | null
 }
 
 export interface CruiseView {
   readonly dom: HTMLElement
   /** 画布尺寸变了 */
   resize(w: number, h: number): void
-  /** 落到第 i 站 */
+  /** 落到第 i 站（立即，不走穿越） */
   focus(index: number): void
   /** 当前在第几站 */
   at(): number
+  /** 前进一站（走光速穿越） */
+  forward(): void
+  /** 后退一站（走光速穿越） */
+  back(): void
   /** 一帧 */
   frame(dt: number, time: number): void
   /**
    * 定格：把 dt 掐成 0，整个场景停住。
    *
-   * 截图往返有几百毫秒，稍纵即逝的帧（「掠过」只有零点几秒）抓不住，
-   * 只能先把它停住再截。
+   * 截图往返有几百毫秒，稍纵即逝的帧抓不住，只能先把它停住再截。
    */
   freeze(): void
   thaw(): void
@@ -246,7 +246,6 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   const stations = manifest.stations
   const N = stations.length
   const speedBase = options.speedBase ?? 260
-  const exitMode: ImageExit = options.imageExit ?? 'auto'
   const forcedTier: Tier | null = options.forceTier ?? null
 
   // --- 画布 ---
@@ -308,20 +307,26 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     if (!t) {
       t = new Image()
       t.src = src
-      texCache.set(src, t)
+      texCache.set(t.src, t)
     }
     return t.complete && t.naturalWidth > 0 ? t : null
   }
 
   /** 预载一站的图，等它们解码完再进这一段 */
   function preload(segIndex: number): Promise<void> {
-    const st = stations[segIndex]
-    if (!st) return Promise.resolve()
+    const list: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const st = stations[segIndex + i]
+      if (!st) break
+      // 本站的图全载；后面的站只载高亮图 —— 远环上只放得下一张小图
+      const tiers = i === 0 ? [0, 1, 2] : [0]
+      for (const lv of tiers) list.push(...(pools[segIndex + i]?.[lv] ?? []))
+    }
     return Promise.all(
-      (st.images ?? []).map(
-        (im) =>
+      list.map(
+        (src) =>
           new Promise<void>((res) => {
-            const t = tex(im.src)
+            const t = tex(src)
             if (!t) {
               res()
               return
@@ -344,49 +349,200 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   let H = 1
   let DPR = 1
 
-  let seg = 0 // 当前航段（目标站）
-  let u = 0 // 段内进度 0→1
+  let seg = 0 // 当前站
+  let pos = 0 // 隧道位置（浮点站号）
   let warp = -1 // 穿越进度；−1 = 不在穿越
+  let warpFrom = 0 // 出发站
+  let warpTo = 0 // 目标站
+  let warpDir = 1 // 穿越方向：+1 前进 / −1 后退
   let speed = 0 // 平滑后的指针速度
-  let travel = 0 // 指针累计位移
-  let spawnAcc = 0
   let tier = 0 // 档位（浮点，0 高亮 → 2 细节）
-  let ringPhase = 0 // 环在深度上的相位
+  let meshPhase = 0 // 丝网肋环在深度上的相位
   let flash = 0 // 穿越白场
-  let seq = 0 // 内容序号（角度用）
   let panelT = 0 // 面板逐行浮现的计时
   let shownStation = -1
-  let queue: { src: string; tier: Tier }[] = [] // 本段素材队列
-  let queueRound = 0 // 素材放行完重新洗牌的轮次
-
-  let items: Item[] = []
+  let zoomed: string | null = null // 拿到眼前来看的那张
 
   let px = 0
   let py = 0
   let lpx = 0
   let lpy = 0
-  let pressing = false
-  let pressMoved = 0
   let pointerIn = false
   let frozen = false
+  /** 横向累计位移：划过阈值就跳一站 */
+  let jumpAcc = 0
 
-  /** 轴心（跟指针走，带滞后和阻尼） */
+  /** 前台环心（跟指针走，带滞后和阻尼） */
   let ax = 0
   let ay = 0
+  /** 消失点 */
+  let vpx = 0
+  let vpy = 0
 
-  /** 视野中心：让开左侧面板 */
+  // -------------------------------------------------------------------------
+  // 取景
+  // -------------------------------------------------------------------------
+
+  /** 右侧文字块占多宽 */
   function panelWidth(): number {
-    return Math.min(PANEL_W, Math.max(0, W - 56))
+    return Math.min(260, Math.max(0, W - 56))
   }
-  function viewCx(): number {
-    return W * 0.5 + panelWidth() * 0.36
+
+  /** 当前环的半径：受画幅短边和右侧文字块双重限制 */
+  function readRadius(): number {
+    const avail = Math.max(120, W - panelWidth() - 40)
+    return Math.max(90, Math.min(H * 0.42, avail * 0.44))
   }
-  function viewCy(): number {
-    return H * 0.5
+
+  /** 前台环心的基准位置（环排往左上，所以基准偏右下） */
+  function baseX(): number {
+    return (W - panelWidth()) * 0.52
+  }
+  function baseY(): number {
+    return H * 0.53
+  }
+
+  /**
+   * 深度偏移 → 屏幕上的位置。
+   *
+   * ```
+   *   z  = z₀ × (1 + off × DZ)
+   *   r  = K / z
+   *   c  = VP + (axis − VP) × (r / r₀)      （off ≥ 0，在消失点那一侧）
+   *   c  = axis + (axis − VP) × (r / r₀ − 1) （off < 0，已经越过镜头，从近处压过来）
+   * ```
+   *
+   * 最后一行是关键：半径缩到几成，环心就朝消失点收几成 ——
+   * 环排成一行而不是同心圆，靠的就是它。
+   */
+  function placeAt(off: number): { z: number; r: number; cx: number; cy: number } | null {
+    const r0 = readRadius()
+    const z0 = K / r0
+    const z = z0 * (1 + off * RING_SEQ_DZ)
+    if (z <= Z_NEAR) return null
+    const r = K / z
+    if (r > R_MAX) return null
+    const s = r / r0
+    const cx = off >= 0 ? vpx + (ax - vpx) * s : ax + (ax - vpx) * (s - 1)
+    const cy = off >= 0 ? vpy + (ay - vpy) * s : ay + (ay - vpy) * (s - 1)
+    return { z, r, cx, cy }
+  }
+
+  /**
+   * 站 k 在隧道里的偏移。
+   *
+   * `pos` 是**镜头在隧道里的位置**（浮点站号）。
+   *
+   * ```
+   *   前进：off = k − pos
+   *   后退：off = pos − k
+   * ```
+   *
+   * 后退不是把前进的偏移取绝对值 —— 那样两站会落到同一深度、叠在一起。
+   * 后退是**整排调头**：上一站从深处长过来（off 1 → 0），
+   * 已经看过的站从镜头边掠过（off 0 → −1）。
+   */
+  function offsetOf(k: number): number {
+    return warpDir >= 0 ? k - pos : pos - k
   }
 
   // -------------------------------------------------------------------------
-  // 指针
+  // 环序列
+  // -------------------------------------------------------------------------
+
+  /**
+   * 这一站按当前档位该拿哪张图。
+   *
+   * 档位是**解锁**不是**筛选**：慢的时候只出高亮图，快了才出概览和细节。
+   */
+  function pickPhoto(k: number, tierNow: number): string | null {
+    const list = pools[k]
+    if (!list) return null
+    const t = Math.floor(tierNow + 1e-6)
+    const order: Tier[] = t >= 2 ? [2, 1, 0] : t >= 1 ? [1, 0] : [0]
+    for (const lv of order) {
+      const pool = list[lv] ?? []
+      if (pool.length) return pool[0]!
+    }
+    return null
+  }
+
+  /**
+   * 照片的不透明度：穿越时淡出淡入，照片本身一点不位移。
+   *
+   * 静止时**只有当前这一环有照片** —— 远环也塞一张的话，
+   * 四张小图会叠在当前站那张大图上，糊成一团。
+   */
+  function photoAlpha(k: number): number {
+    if (warp < 0) return k === seg ? 1 : 0
+    const p = Math.min(1, warp)
+    // 出发的那个：照片淡出，环自己冲向镜头
+    if (k === photoFrom) return 1 - smoothstep(0, 0.32, p)
+    // 到达的那个：随环长大淡入
+    if (k === photoTo) {
+      return warpDir >= 0 ? smoothstep(0.1, 0.6, p) : smoothstep(0.78, 1, p)
+    }
+    return 0
+  }
+
+  let photoFrom = 0
+  let photoTo = 0
+
+  /** 环的不透明度：越深越淡，冲过镜头的那个迅速淡出 */
+  function ringAlpha(off: number, r: number): number {
+    const base = off >= 0 ? Math.max(0.22, 1 - 0.17 * off) : Math.max(0, 1 + 0.9 * off)
+    const big = Math.min(1, r / (R_MAX * 0.45))
+    return base * (1 - 0.75 * big * big)
+  }
+
+  /** 隧道里挂着的那几个环 —— 从远到近 */
+  function ringSequence(): Ring[] {
+    const out: Ring[] = []
+    const base = Math.floor(pos)
+    for (let k = base - 3; k <= base + RING_COUNT + 1; k++) {
+      const st = stations[k]
+      if (!st) continue
+      const off = offsetOf(k)
+      // 台上只留四个环：偏移 0~3，外加正在冲出画幅的那一个（off ∈ −1~0）
+      if (off <= -1 || off > RING_COUNT - 0.5) continue
+      const p = placeAt(off)
+      if (!p) continue
+      const a = ringAlpha(off, p.r)
+      if (a <= 0.02) continue
+      const pa = photoAlpha(k)
+      // 档位一样：穿越途中亮出来的那张，落定后还是同一张，不会跳一下
+      const src = pa > 0.02 ? pickPhoto(k, tier) : null
+      out.push({
+        k,
+        no: k + 1,
+        st,
+        off,
+        z: p.z,
+        r: p.r,
+        cx: p.cx,
+        cy: p.cy,
+        a,
+        src,
+        pa,
+      })
+    }
+    return out
+  }
+
+  /**
+   * 环心照片的尺寸。
+   *
+   * 用**半对角线**而不是宽高来定：环是个圆，照片要能被它框住，
+   * 那约束落在对角线上。
+   */
+  function photoBox(r: number, ar: number): { w: number; h: number } {
+    const diag = 2 * r * PHOTO_K
+    const s = Math.sqrt(ar * ar + 1)
+    return { w: (diag * ar) / s, h: diag / s }
+  }
+
+  // -------------------------------------------------------------------------
+  // 交互
   // -------------------------------------------------------------------------
 
   /**
@@ -409,7 +565,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       lpx = px
       lpy = py
     }
-    pressMoved += Math.hypot(x - lpx, y - lpy)
+    // 横向累计位移：越过阈值就跳一站
+    jumpAcc += x - lpx
     px = x
     py = y
     if (hintEl) hideHint()
@@ -417,20 +574,64 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
 
   canvas.addEventListener('pointerdown', (e) => {
     const { x, y } = pointerPos(e)
-    pressing = true
-    pressMoved = 0
-    px = x
-    py = y
-  })
-
-  canvas.addEventListener('pointerup', () => {
-    if (pressing && pressMoved < CLICK_SLOP) pinNearest()
-    pressing = false
+    // 已经放大了 → 点一下收回去
+    if (zoomed) {
+      zoomed = null
+      return
+    }
+    const rings = ringSequence()
+    // 1) 点在当前环的照片上 = 拿到眼前来看
+    const cur = rings.find((g) => g.off === 0)
+    if (cur && cur.src) {
+      const t = tex(cur.src)
+      if (t) {
+        const box = photoBox(cur.r, t.naturalWidth / t.naturalHeight)
+        if (Math.abs(x - cur.cx) <= box.w / 2 && Math.abs(y - cur.cy) <= box.h / 2) {
+          zoomed = cur.src
+          return
+        }
+      }
+    }
+    // 2) 点在别的环上 = 直接跳到那一站
+    let best: Ring | null = null
+    let bestD = 1e9
+    for (const g of rings) {
+      if (g.off <= 0) continue
+      const d = Math.abs(Math.hypot(x - g.cx, y - g.cy) - g.r)
+      if (d < bestD) {
+        bestD = d
+        best = g
+      }
+    }
+    if (best && bestD < Math.max(34, best.r * 0.22)) jumpTo(best.k)
   })
 
   canvas.addEventListener('pointerleave', () => {
     pointerIn = false
   })
+
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault()
+      jumpTo(e.deltaY > 0 ? seg + 1 : seg - 1)
+    },
+    { passive: false },
+  )
+
+  /** 跳到第 k 站 —— 走光速穿越 */
+  function jumpTo(k: number): void {
+    if (warp >= 0) return
+    const next = Math.max(0, Math.min(N - 1, k))
+    if (next === seg) return
+    warpFrom = seg
+    warpTo = next
+    warpDir = next > seg ? 1 : -1
+    photoFrom = seg
+    photoTo = next
+    warp = 0
+    zoomed = null
+  }
 
   let hintTimer = 0
   function hideHint(): void {
@@ -442,220 +643,196 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   }
 
   // -------------------------------------------------------------------------
-  // 放行
+  // 画
   // -------------------------------------------------------------------------
 
-  /** 当前档位下能放行的图（读数用，不分配数组） */
-  function eligibleCount(): number {
-    const pool = pools[seg] ?? []
-    const t = Math.floor(tier + 1e-6)
-    let n = 0
-    for (let i = 0; i <= t; i++) n += (pool[i] ?? []).length
-    return n
+  /** 隧道尽头的辉光 —— 那是「前面」 */
+  function drawGlow(): void {
+    const g = ctx.createRadialGradient(vpx, vpy, 0, vpx, vpy, H * 0.7)
+    g.addColorStop(0, 'rgba(130,205,255,.26)')
+    g.addColorStop(0.18, 'rgba(74,146,214,.10)')
+    g.addColorStop(0.55, 'rgba(30,70,120,.03)')
+    g.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, W, H)
   }
 
-  /** 换段：重排素材队列 */
-  function refillQueue(i: number): void {
-    const st = stations[i]
-    if (!st) {
-      queue = []
-      return
+  /** 纵向线：从消失点射出去的直线，管壁的经线 */
+  function drawMeridians(): void {
+    const n = MERIDIANS + Math.round(tier * 2)
+    ctx.lineWidth = 1
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + meshPhase * 0.012
+      const ca = Math.cos(a)
+      const sa = Math.sin(a)
+      const g = ctx.createLinearGradient(vpx, vpy, vpx + ca * R_MAX, vpy + sa * R_MAX)
+      g.addColorStop(0, 'rgba(138,204,244,.34)')
+      g.addColorStop(0.22, 'rgba(96,168,224,.13)')
+      g.addColorStop(1, 'rgba(60,120,180,0)')
+      ctx.strokeStyle = g
+      ctx.beginPath()
+      ctx.moveTo(vpx + ca * R0 * 0.5, vpy + sa * R0 * 0.5)
+      ctx.lineTo(vpx + ca * R_MAX, vpy + sa * R_MAX)
+      ctx.stroke()
     }
-    const list = (st.images ?? []).map((im) => ({
-      src: im.src,
-      tier: Math.min(2, im.tier | 0) as Tier,
-    }))
-    queue = shuffled(list, 0x5eed + i * 7919 + queueRound * 104729)
-  }
-
-  function loadSegment(i: number): void {
-    queueRound = 0
-    refillQueue(i)
-    void preload(i)
   }
 
   /**
-   * 放一条内容。
+   * 肋环：隧道壁上的一圈圈横箍。
    *
-   * 队列是全站洗牌过的，但**只放行档位以内的**：
-   * 慢的时候一条一条轮过高亮图，快的时候概览、细节也一起进场。
-   * 不合格的留在队列里等档位涨上来 —— 档位是「解锁」，不是「筛选」。
+   * 它们和项目环用同一条 1/z 律，只是深度错开半格 ——
+   * 画出来是一排朝消失点收的圈，纵深感就是这么来的。
    */
-  function spawn(): void {
-    const t = Math.floor(tier + 1e-6)
-    let idx = -1
-    for (let i = 0; i < queue.length; i++) {
-      if (queue[i]!.tier <= t) {
-        idx = i
-        break
+  function drawMesh(): void {
+    ctx.lineWidth = 1
+    const span = MESH_TO - MESH_FROM
+    for (let i = 0; i * MESH_STEP < span; i++) {
+      const off = MESH_FROM + ((i * MESH_STEP + meshPhase * 0.04) % span)
+      const p = placeAt(off)
+      if (!p) continue
+      const a = 0.16 * (1 - (off - MESH_FROM) / span) + 0.02
+      ctx.strokeStyle = `rgba(112,184,236,${a.toFixed(3)})`
+      ctx.beginPath()
+      ctx.arc(p.cx, p.cy, p.r, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+  }
+
+  /** 星尘：向外冲的颗粒，靠近相机时拉成速度线 */
+  const DUST: { ang: number; z: number; k: number }[] = (() => {
+    const r = rng(0x9e3779b9)
+    const out: { ang: number; z: number; k: number }[] = []
+    for (let i = 0; i < 320; i++) {
+      out.push({ ang: r() * Math.PI * 2, z: 0.6 + r() * 7.7, k: 0.7 + r() * 0.7 })
+    }
+    return out
+  })()
+
+  function drawDust(dt: number, vz: number): void {
+    const active = 140 + Math.round(tier * 70)
+    const r0 = readRadius()
+    const z0 = K / r0
+    for (let i = 0; i < Math.min(active, DUST.length); i++) {
+      const d = DUST[i]!
+      d.z -= vz * d.k * dt
+      if (d.z < Z_NEAR) {
+        d.z = 7.7 * (0.6 + (0.4 * ((i * 37) % 10)) / 10)
+        d.ang = (i * 2.39996323) % (Math.PI * 2)
       }
+      const r = K / d.z
+      const r2 = K / (d.z + 0.45 + d.k * 0.5)
+      const s = r / r0
+      const cx = vpx + (ax - vpx) * s
+      const cy = vpy + (ay - vpy) * s
+      const s2 = r2 / r0
+      const cx2 = vpx + (ax - vpx) * s2
+      const cy2 = vpy + (ay - vpy) * s2
+      const x = cx + Math.cos(d.ang) * r
+      const y = cy + Math.sin(d.ang) * r
+      const x2 = cx2 + Math.cos(d.ang) * r2
+      const y2 = cy2 + Math.sin(d.ang) * r2
+      const al = Math.min(0.9, r / 300) * (1 - r / R_MAX)
+      if (al <= 0.02) continue
+      // 尾巴淡、头亮 —— 只画一根硬线会像划痕
+      ctx.strokeStyle = `rgba(150,200,240,${(al * 0.4).toFixed(3)})`
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(x, y)
+      ctx.lineTo(x2, y2)
+      ctx.stroke()
+      const s2s = r > 400 ? 1.8 : 1.2
+      ctx.fillStyle = `rgba(216,238,255,${al.toFixed(3)})`
+      ctx.fillRect(x - s2s / 2, y - s2s / 2, s2s, s2s)
     }
-    if (idx < 0) {
-      // 这一档一张都没有 —— 有些站压根没备高亮图（宣城、太湖就是），
-      // 不兜底的话那一段隧道是空的。退到还剩的那一档最低层。
-      let low = 3
-      for (let i = 0; i < queue.length; i++) low = Math.min(low, queue[i]!.tier)
-      for (let i = 0; i < queue.length; i++) {
-        if (queue[i]!.tier === low) {
-          idx = i
-          break
-        }
-      }
-    }
-    if (idx < 0) {
-      // 这一站的素材放行完了 → 重新洗牌再来一轮（换个顺序，别原地重复）
-      queueRound++
-      refillQueue(seg)
-      if (!queue.length) return
-      idx = 0
-    }
-    const im = queue.splice(idx, 1)[0]
-    if (!im) return
-    items.push({
-      src: im.src,
-      tier: im.tier,
-      ang: seq * GOLDEN,
-      dir: Math.cos(seq * GOLDEN) >= 0 ? 1 : -1,
-      z: Z_FAR,
-      age: 0,
-      phase: 0,
-      mode: null,
-      pinned: false,
-      pinT: 0,
-      trail: [],
-    })
-    seq++
   }
 
-  /** 钉住离指针最近的那一条 */
-  function pinNearest(): void {
-    let best: Item | null = null
-    let bd = PIN_RADIUS
-    for (const it of items) {
-      if (it.pinned) continue
-      const s = place(it)
-      const d = Math.hypot(s.x - px, s.y - py)
-      if (d < bd) {
-        bd = d
-        best = it
-      }
-    }
-    if (!best) return
-    for (const it of items) if (it.pinned && it !== best) it.pinned = false
-    best.pinned = true
-  }
-
-  // -------------------------------------------------------------------------
-  // 位置
-  // -------------------------------------------------------------------------
-
-  /** 一条内容在屏幕上的位置与半径 */
-  function place(it: Item): { x: number; y: number; r: number } {
-    const r = K / it.z
-    return { x: ax + Math.cos(it.ang) * r, y: ay + Math.sin(it.ang) * r, r }
-  }
-
-  // -------------------------------------------------------------------------
-  // 项目环
-  // -------------------------------------------------------------------------
-
-  /**
-   * 项目环的深度。
-   *
-   * 环从远处来 → 停住让人读 → 冲过去。
-   *
-   * 停住时的半径按**画幅短边**算 —— 环是竖着放的，半径超过半屏高，
-   * 上弧的字就跑到画幅外去了。
-   */
-  function ringDepth(uu: number): number {
-    const readZ = K / (Math.min(W, H) * RING_READ_K)
-    const approach = 1 - smoother(Math.min(1, uu / 0.55))
-    const rush = smoother(Math.max(0, (uu - 0.88) / 0.12))
-    return readZ + (RING_FAR - readZ) * approach - (readZ - RING_NEAR) * rush
-  }
-
-  /**
-   * 轴心的纵向范围 —— 项目环的上弧（站名）不能出画幅。
-   *
-   * 环停住时的半径是确定的（按画幅短边算），上弧该落在哪儿也就确定了。
-   * 轴心在这个范围里走，环上的字就永远在画幅内 ——
-   * 指针往上一甩，站名不会跟着飘出顶边。
-   */
-  function ayLimits(): { top: number; bottom: number } {
-    const r = Math.min(W, H) * RING_READ_K
-    const titleR = r * (1 + RING_TEXT_OUT)
-    const titleH = (r * RING_TITLE_K) / 2
-    const metaR = r * (1 - RING_TEXT_IN)
-    const metaH = (r * RING_META_K) / 2
-    const pad = 10
-    return { top: titleR + titleH + pad, bottom: H - (metaR + metaH + pad) }
-  }
-
-  /** 项目环的半径与不透明度 */
-  function stationRing(): { st: Station; r: number; a: number } | null {
-    const st = stations[seg]
-    if (!st) return null
-    const r = K / ringDepth(u)
-    if (r < 34) return null
-    const a = Math.min(1, (r - 34) / 90) * (1 - smoother((r / R_MAX - 0.62) / 0.38))
-    if (a <= 0.01) return null
-    return { st, r, a }
-  }
-
-  /** 环本体：双圈 + 刻度。像一个仪表的表圈。 */
-  function drawStationRing(): void {
-    const g = stationRing()
-    if (!g) return
-    const { r, a } = g
+  /** 环本体：双圈 + 刻度。像一个仪表的表圈 */
+  function drawRingBody(g: Ring): void {
+    const { r, a, cx, cy } = g
     ctx.save()
     ctx.globalAlpha = a
     ctx.lineWidth = 1.6
     ctx.strokeStyle = 'rgba(176,230,255,.78)'
     ctx.beginPath()
-    ctx.arc(ax, ay, r, 0, Math.PI * 2)
+    ctx.arc(cx, cy, r, 0, Math.PI * 2)
     ctx.stroke()
     ctx.lineWidth = 1
     ctx.strokeStyle = 'rgba(150,206,246,.34)'
     ctx.beginPath()
-    ctx.arc(ax, ay, r * 0.955, 0, Math.PI * 2)
+    ctx.arc(cx, cy, r * 0.955, 0, Math.PI * 2)
     ctx.stroke()
-    for (let i = 0; i < 72; i++) {
-      const t = (i / 72) * Math.PI * 2
-      const long = i % 6 === 0
+    // 刻度：72 格，每 6 格一道长刻
+    const ticks = r > 120 ? 72 : 36
+    for (let i = 0; i < ticks; i++) {
+      const t = (i / ticks) * Math.PI * 2
+      const long = i % (ticks / 12) === 0
       const len = long ? 16 : 6
       ctx.strokeStyle = long ? 'rgba(186,236,255,.66)' : 'rgba(132,192,236,.32)'
       ctx.lineWidth = 1
       ctx.beginPath()
-      ctx.moveTo(ax + Math.cos(t) * (r - len / 2), ay + Math.sin(t) * (r - len / 2))
-      ctx.lineTo(ax + Math.cos(t) * (r + len / 2), ay + Math.sin(t) * (r + len / 2))
+      ctx.moveTo(cx + Math.cos(t) * (r - len / 2), cy + Math.sin(t) * (r - len / 2))
+      ctx.lineTo(cx + Math.cos(t) * (r + len / 2), cy + Math.sin(t) * (r + len / 2))
       ctx.stroke()
     }
     ctx.restore()
   }
 
-  /** 环上的字：站名走外弧（上），时间地点走内弧（下） */
-  function drawStationRingText(): void {
-    const g = stationRing()
-    if (!g) return
-    const { st, r, a } = g
-    const font = 'system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'
-    const titleSize = Math.max(11, Math.min(52, r * RING_TITLE_K))
-    const metaSize = Math.max(9, Math.min(32, r * RING_META_K))
+  /** 环里的照片 —— 停在这儿，不飞出去 */
+  function drawRingPhoto(g: Ring): void {
+    if (!g.src) return
+    const t = tex(g.src)
+    if (!t) return
+    const box = photoBox(g.r, t.naturalWidth / t.naturalHeight)
     ctx.save()
-    ctx.globalAlpha = a
-    arcText(st.title ?? '', ax, ay, r * (1 + RING_TEXT_OUT), -Math.PI / 2, 1, titleSize, 'rgba(234,247,255,.95)', font)
+    ctx.globalAlpha = g.a * g.pa
+    ctx.drawImage(t, g.cx - box.w / 2, g.cy - box.h / 2, box.w, box.h)
+    // 光片边框：让它看起来是隧道里的一块光板，而不是贴上去的照片
+    ctx.globalAlpha = g.a * g.pa * 0.55
+    ctx.strokeStyle = 'rgba(150,214,255,.8)'
+    ctx.lineWidth = 1
+    ctx.strokeRect(g.cx - box.w / 2 + 0.5, g.cy - box.h / 2 + 0.5, box.w - 1, box.h - 1)
+    ctx.restore()
+  }
+
+  /** 环上的字：站名走外弧（上），序号时间地点走内弧（下） */
+  function drawRingText(g: Ring): void {
+    const { r, a, cx, cy } = g
+    const font = 'system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'
+    const titleSize = Math.max(9, Math.min(48, r * RING_TITLE_K))
+    const metaSize = Math.max(8, Math.min(28, r * RING_META_K))
+    ctx.save()
+    ctx.globalAlpha = a * textAlpha()
     arcText(
-      `${String(seg + 1).padStart(2, '0')} · ${st.date ?? ''} · ${st.place ?? ''}`,
-      ax,
-      ay,
+      g.st.title ?? '',
+      cx,
+      cy,
+      r * (1 + RING_TEXT_OUT),
+      -Math.PI / 2,
+      1,
+      titleSize,
+      'rgba(234,247,255,.95)',
+      font,
+      TITLE_SPAN,
+    )
+    arcText(
+      `${String(g.no).padStart(2, '0')} · ${g.st.date ?? ''} · ${g.st.place ?? ''}`,
+      cx,
+      cy,
       r * (1 - RING_TEXT_IN),
       Math.PI / 2,
       -1,
       metaSize,
       'rgba(178,224,255,.95)',
       font,
+      META_SPAN,
     )
     ctx.restore()
+  }
+
+  /** 穿越时字淡一下 —— 白场那一瞬什么都看不清 */
+  function textAlpha(): number {
+    if (warp < 0) return 1
+    return 1 - Math.sin(Math.PI * Math.min(1, warp))
   }
 
   /**
@@ -672,6 +849,9 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
    * ```
    *
    * 用错一条就会把字倒过来 —— 下弧最容易倒。
+   *
+   * `maxSpan` 是这段弧最多能占多少弧度。字太长就缩字号，
+   * 不缩的话一圈字会首尾相接叠成一坨。
    */
   function arcText(
     text: string,
@@ -683,22 +863,32 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     size: number,
     color: string,
     font: string,
+    maxSpan = Math.PI * 0.9,
   ): void {
+    if (!text) return
     ctx.save()
     ctx.font = `${size}px ${font}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
+    const chars = [...text]
+    let widths = chars.map((c) => ctx.measureText(c).width)
+    let total = widths.reduce((a, b) => a + b, 0)
+    // 太长就缩字号
+    const span = total / r
+    if (span > maxSpan && span > 0) {
+      const k = maxSpan / span
+      ctx.font = `${Math.max(7, size * k)}px ${font}`
+      widths = chars.map((c) => ctx.measureText(c).width)
+      total = widths.reduce((a, b) => a + b, 0)
+    }
     // 环上的字会压到浅色的照片上（海报、课堂照）—— 没有底板，
     // 就给每个字描一圈深色边。描边是跟着字走的，不是块板。
     ctx.lineJoin = 'round'
     ctx.miterLimit = 2
     ctx.strokeStyle = 'rgba(3,10,20,.82)'
     ctx.lineWidth = Math.max(1.5, size * 0.17)
-    const chars = [...text]
-    const widths = chars.map((c) => ctx.measureText(c).width)
-    const total = widths.reduce((a, b) => a + b, 0)
-    const span = total / r
-    let a = mid - (dir * span) / 2
+    const totalSpan = total / r
+    let a = mid - (dir * totalSpan) / 2
     for (let i = 0; i < chars.length; i++) {
       const step = widths[i]! / r
       const ca = a + (dir * step) / 2
@@ -714,154 +904,9 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     ctx.restore()
   }
 
-  // -------------------------------------------------------------------------
-  // 画
-  // -------------------------------------------------------------------------
-
-  /** 隧道尽头的辉光 —— 那是「前面」 */
-  function drawGlow(): void {
-    const g = ctx.createRadialGradient(ax, ay, 0, ax, ay, H * 0.62)
-    g.addColorStop(0, 'rgba(130,205,255,.26)')
-    g.addColorStop(0.18, 'rgba(74,146,214,.10)')
-    g.addColorStop(0.55, 'rgba(30,70,120,.03)')
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, W, H)
-  }
-
-  /** 纵向线：从消失点射出去的直线，管壁的经线 */
-  function drawMeridians(): void {
-    const n = MERIDIANS + Math.round(tier * 2)
-    ctx.lineWidth = 1
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + ringPhase * 0.012
-      const ca = Math.cos(a)
-      const sa = Math.sin(a)
-      const g = ctx.createLinearGradient(ax, ay, ax + ca * R_MAX, ay + sa * R_MAX)
-      g.addColorStop(0, 'rgba(138,204,244,.34)')
-      g.addColorStop(0.22, 'rgba(96,168,224,.13)')
-      g.addColorStop(1, 'rgba(60,120,180,0)')
-      ctx.strokeStyle = g
-      ctx.beginPath()
-      ctx.moveTo(ax + ca * R0 * 0.5, ay + sa * R0 * 0.5)
-      ctx.lineTo(ax + ca * R_MAX, ay + sa * R_MAX)
-      ctx.stroke()
-    }
-  }
-
-  /** 环：深度等距，屏幕上自然往消失点聚拢 —— 这是隧道，不是雷达 */
-  function drawRings(): void {
-    const count = 8 + Math.round(tier * 3)
-    const span = RING_DZ * count
-    ctx.lineWidth = 1
-    for (let i = 0; i < count; i++) {
-      const z = Z_NEAR + ((ringPhase + i * RING_DZ) % span)
-      if (z > Z_RING_FAR) continue
-      const r = K / z
-      if (r > R_MAX * 1.02) continue
-      const a = 0.38 * (1 - z / (Z_RING_FAR + 1)) + 0.07
-      ctx.strokeStyle = `rgba(112,184,236,${a.toFixed(3)})`
-      ctx.beginPath()
-      ctx.arc(ax, ay, r, 0, Math.PI * 2)
-      ctx.stroke()
-    }
-  }
-
-  /** 星尘：向外冲的颗粒，靠近相机时拉成速度线 */
-  const DUST: { ang: number; z: number; k: number }[] = (() => {
-    const r = rng(0x9e3779b9)
-    const out: { ang: number; z: number; k: number }[] = []
-    for (let i = 0; i < 320; i++) {
-      out.push({ ang: r() * Math.PI * 2, z: 0.6 + r() * Z_RING_FAR, k: 0.7 + r() * 0.7 })
-    }
-    return out
-  })()
-
-  function drawDust(dt: number, vz: number): void {
-    const active = 140 + Math.round(tier * 70)
-    for (let i = 0; i < Math.min(active, DUST.length); i++) {
-      const d = DUST[i]!
-      d.z -= vz * d.k * dt
-      if (d.z < Z_NEAR) {
-        d.z = Z_RING_FAR * (0.6 + (0.4 * ((i * 37) % 10)) / 10)
-        d.ang = (i * GOLDEN) % (Math.PI * 2)
-      }
-      const r = K / d.z
-      const r2 = K / (d.z + 0.45 + d.k * 0.5)
-      const x = ax + Math.cos(d.ang) * r
-      const y = ay + Math.sin(d.ang) * r
-      const x2 = ax + Math.cos(d.ang) * r2
-      const y2 = ay + Math.sin(d.ang) * r2
-      const al = Math.min(0.9, r / 300) * (1 - r / R_MAX)
-      if (al <= 0.02) continue
-      // 尾巴淡、头亮 —— 只画一根硬线会像划痕
-      ctx.strokeStyle = `rgba(150,200,240,${(al * 0.4).toFixed(3)})`
-      ctx.lineWidth = 1
-      ctx.beginPath()
-      ctx.moveTo(x, y)
-      ctx.lineTo(x2, y2)
-      ctx.stroke()
-      const s = r > 400 ? 1.8 : 1.2
-      ctx.fillStyle = `rgba(216,238,255,${al.toFixed(3)})`
-      ctx.fillRect(x - s / 2, y - s / 2, s, s)
-    }
-  }
-
-  /** 内容 + 它的速度线 */
-  function drawItems(): void {
-    // 远的先画（z 大 = 远），近的盖在上面；钉住的那张最后画，压在最上层
-    const sorted = items.slice().sort((a, b) => (a.pinned ? 1 : 0) - (b.pinned ? 1 : 0) || b.z - a.z)
-    for (const it of sorted) {
-      const t = tex(it.src)
-      if (!t) continue
-      const s = place(it)
-      if (s.r > R_MAX * 1.08) continue
-
-      let h = s.r * SIZE_K
-      let a = Math.min(1, it.age / 0.18)
-      if (it.phase === 1 && it.mode === 'recede') {
-        a *= 1 - smoother((it.z - Z_TURN) / (Z_FAR - Z_TURN))
-      } else {
-        // 掠过时淡出：越胀大越透明，不让它糊住画面
-        const k = Math.min(1, Math.max(0, (s.r / R_MAX - FADE_START) / (FADE_END - FADE_START)))
-        a *= 1 - k * k * (3 - 2 * k)
-      }
-      if (a <= 0.01) continue
-
-      // 钉住 = 拿到眼前来看：尺寸离开半径的束缚，长到能读的大小
-      if (it.pinned) h = h + (READ_SIZE * H - h) * it.pinT
-      const ar = t.naturalWidth / t.naturalHeight
-      const w = h * ar
-
-      // 头图：本体永远要画。
-      ctx.globalAlpha = a
-      ctx.drawImage(t, s.x - w / 2, s.y - h / 2, w, h)
-
-      // 拖影：沿**真实走过的路径**留几帧，不是按深度硬塞几个副本。
-      // 按深度塞副本会叠成一摞灰盒子（海报本来就是大色块，一叠就露馅），
-      // 沿路径留帧才像运动模糊 —— 帧数还得给够，副本太少反而看得出「一张张」。
-      for (let k = it.trail.length - 1; k >= 0; k--) {
-        const tr = it.trail[k]!
-        const ts = tr.s / s.r
-        ctx.globalAlpha = a * 0.12
-        ctx.drawImage(t, tr.x - (w * ts) / 2, tr.y - (h * ts) / 2, w * ts, h * ts)
-      }
-      ctx.globalAlpha = 1
-
-      // 光片边框：让它看起来是隧道里的一块光板，而不是贴上去的照片
-      if (!it.pinned) {
-        ctx.globalAlpha = a * 0.55
-        ctx.strokeStyle = 'rgba(150,214,255,.8)'
-        ctx.lineWidth = 1
-        ctx.strokeRect(s.x - w / 2 + 0.5, s.y - h / 2 + 0.5, w - 1, h - 1)
-        ctx.globalAlpha = 1
-      }
-    }
-  }
-
-  /** 暗角：把注意力压回轴心 */
+  /** 暗角：把注意力压回前台环 */
   function drawVignette(): void {
-    const g = ctx.createRadialGradient(ax, ay, H * 0.2, ax, ay, H * 0.95)
+    const g = ctx.createRadialGradient(ax, ay, H * 0.18, ax, ay, H * 0.95)
     g.addColorStop(0, 'rgba(0,0,0,0)')
     g.addColorStop(1, 'rgba(0,0,0,.66)')
     ctx.fillStyle = g
@@ -870,7 +915,7 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
 
   /** 指针：一个小十字 */
   function drawCursor(): void {
-    if (!pointerIn) return
+    if (!pointerIn || zoomed) return
     ctx.strokeStyle = 'rgba(124,192,240,.5)'
     ctx.lineWidth = 1
     ctx.beginPath()
@@ -886,16 +931,59 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     ctx.stroke()
   }
 
-  // -------------------------------------------------------------------------
-  // 段落结构
-  // -------------------------------------------------------------------------
-
-  function startWarp(): void {
-    if (warp >= 0 || seg >= N - 1) return
-    warp = 0
-    flash = 1
-    for (const it of items) it.pinned = false
+  /**
+   * 光速穿越的速度线 —— 从消失点射出去。
+   *
+   * 这是这一版最被认可的东西：**光速穿越时那束光**。
+   * 所以它不是「过场时闪一下白」，而是真的有光从深处射过来。
+   */
+  function drawWarpLines(): void {
+    if (warp < 0) return
+    const p = smoother(warp)
+    const n = 42
+    const r0 = rng(0x51ed270b)
+    ctx.save()
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 + r0() * 0.06
+      const ca = Math.cos(ang)
+      const sa = Math.sin(ang)
+      const near = H * (0.08 + r0() * 0.5) * (0.25 + p)
+      const far = R_MAX * 0.55
+      const a = (1 - p) * (0.1 + r0() * 0.34)
+      ctx.strokeStyle = `rgba(186,228,255,${a.toFixed(3)})`
+      ctx.lineWidth = 1 + r0() * 1.4
+      ctx.beginPath()
+      ctx.moveTo(vpx + ca * near, vpy + sa * near)
+      ctx.lineTo(vpx + ca * far, vpy + sa * far)
+      ctx.stroke()
+    }
+    ctx.restore()
   }
+
+  /** 拿到眼前来看的那张 */
+  function drawZoom(): void {
+    if (!zoomed) return
+    const t = tex(zoomed)
+    ctx.save()
+    ctx.fillStyle = 'rgba(3,8,16,.88)'
+    ctx.fillRect(0, 0, W, H)
+    if (t) {
+      const ar = t.naturalWidth / t.naturalHeight
+      const h = H * 0.86
+      const w = h * ar
+      const dw = w > W * 0.9 ? W * 0.9 : w
+      const dh = dw / ar
+      ctx.drawImage(t, (W - dw) / 2, (H - dh) / 2, dw, dh)
+      ctx.strokeStyle = 'rgba(150,214,255,.45)'
+      ctx.lineWidth = 1
+      ctx.strokeRect((W - dw) / 2 + 0.5, (H - dh) / 2 + 0.5, dw - 1, dh - 1)
+    }
+    ctx.restore()
+  }
+
+  // -------------------------------------------------------------------------
+  // 面板与里程尺
+  // -------------------------------------------------------------------------
 
   function updatePanel(): void {
     if (shownStation === seg) return
@@ -907,7 +995,11 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     no.className = 'sm2-cruise__no'
     no.textContent = `${String(seg + 1).padStart(2, '0')} / ${N}`
     panel.append(no)
-    // 站名、时间、地点已经在环上了 —— 面板只带环上放不下的那些
+    const title = document.createElement('span')
+    title.className = 'sm2-cruise__title'
+    title.textContent = st.title
+    panel.append(title)
+    // 时间地点在环上 —— 面板只带环上放不下的那些
     for (const [cls, text] of [
       ['sm2-cruise__lead', st.lead],
       ['sm2-cruise__role', st.role],
@@ -954,7 +1046,6 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     const moved = Math.hypot(dx, dy)
     lpx = px
     lpy = py
-    travel += moved
 
     // 速度：用真实 dt 算（钳过的 dt 会把数值算虚高）
     const inst = Math.min(SPEED_MAX, moved / Math.max(1e-3, dtRaw))
@@ -971,112 +1062,88 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       tier = forcedTier
     }
 
-    // 轴心跟指针走（阻尼 + 滞后 → 甩起来有惯性，但不会晕）
-    // 横向跟得多、纵向几乎不跟：项目环是竖着放的，轴心一飘，
-    // 环上弧的字就跟着跑到画幅外去了。
-    const lag = 1 - Math.exp(-dt / 0.12)
-    const wantX = Math.min(W * 0.78, Math.max(W * 0.24, viewCx() + (px - viewCx()) * 0.32))
-    const lim = ayLimits()
-    const wantY = Math.min(lim.bottom, Math.max(lim.top, viewCy() + (py - viewCy()) * 0.06))
-    ax += (wantX - ax) * lag
-    ay += (wantY - ay) * lag
+    // 横向划过阈值 → 跳一站
+    if (warp < 0 && Math.abs(jumpAcc) > JUMP_PX) {
+      const dir = jumpAcc > 0 ? 1 : -1
+      jumpAcc = 0
+      jumpTo(seg + dir)
+    } else if (warp >= 0) {
+      jumpAcc = 0
+    }
 
-    // 穿越
+    // 光速穿越：隧道位置 pos 从 warpFrom 走到 warpTo
     if (warp >= 0) {
       warp += dt / WARP_TIME
+      const p = Math.min(1, warp)
+      pos = warpFrom + (warpTo - warpFrom) * p
+      flash = Math.max(0, 1 - Math.abs(p - 0.5) * 3.0)
       if (warp >= 1) {
         warp = -1
-        seg += 1
-        u = 0
-        items.length = 0
-        loadSegment(seg)
+        seg = warpTo
+        pos = seg
+        warpDir = 1
+        shownStation = -1
+        zoomed = null
+        photoFrom = seg
+        photoTo = seg
+        void preload(seg)
       }
     } else {
-      // 段内推进：读者走得越多，航段走得越远
-      u = Math.max(0, Math.min(1, u + moved / SEG_PX))
-      if (u >= 1) startWarp()
+      flash = Math.max(0, flash - dt * 2.2)
     }
     warpTag.classList.toggle('is-on', warp >= 0)
-    flash = Math.max(0, flash - dt * 2.2)
 
-    // 流速：环冲多快由指针速度决定 —— 这就是「鼠标移过时的流动感」
+    // 流速：肋环冲多快由指针速度决定 —— 这就是「鼠标移过时的流动感」
     const vz = (VZ_FLOOR + speed * VZ_K) * (warp >= 0 ? 5 : 1)
-    ringPhase += vz * dt
+    meshPhase += vz * dt
 
-    // 发射。指针不动时按「慢慢淌」的速度补一条 ——
-    // 展台上没人动鼠标，画面不能是空的（但补得很慢，读者一动就立刻听他的）。
-    const idle = moved > 0 ? 0 : SPAWN_PX / 1.6
-    spawnAcc = Math.min(spawnAcc + Math.max(moved, idle * dt), SPAWN_PX)
-    if (spawnAcc >= SPAWN_PX) {
-      spawnAcc = 0
-      spawn()
-    }
+    // 前台环心跟指针走（阻尼 + 滞后 → 甩起来有惯性，但不会晕）
+    const r0 = readRadius()
+    const lag = 1 - Math.exp(-dt / 0.12)
+    const bx = baseX()
+    const by = baseY()
+    const wantX = Math.min(bx + 120, Math.max(bx - 120, bx + (px - bx) * 0.1))
+    const wantY = Math.min(by + 90, Math.max(by - 90, by + (py - by) * 0.06))
+    ax += (wantX - ax) * lag
+    ay += (wantY - ay) * lag
+    // 消失点：往前台环心的反方向退出去
+    const ux = Math.cos(ROW_ANGLE)
+    const uy = Math.sin(ROW_ANGLE)
+    vpx = ax + ux * r0 * VP_DIST
+    vpy = ay + uy * r0 * VP_DIST
 
-    // 内容随深度朝读者冲来
-    for (const it of items) {
-      it.age += dt
-      if (it.pinned) {
-        it.pinT = Math.min(1, it.pinT + dt * 3)
-        continue
-      }
-      // 拖影历史：记下**这一步之前**的位置，慢的时候不留（没有拖影可留）
-      if (vz > 26) {
-        const p0 = place(it)
-        it.trail.push({ x: p0.x, y: p0.y, s: p0.r })
-        if (it.trail.length > 7) it.trail.shift()
-      } else if (it.trail.length) {
-        it.trail.length = 0
-      }
-      if (it.phase === 0) {
-        it.z -= vz * dt
-        if (it.z <= Z_TURN) {
-          // 到了转向点：你冲得快，它就掠过飞走；你慢，它就退远
-          it.phase = 1
-          it.mode =
-            exitMode === 'auto' ? (speed > speedBase * 0.85 ? 'sweep' : 'recede') : exitMode
-        }
-      } else if (it.mode === 'sweep') {
-        it.z -= SWEEP_V * dt
-        // 角度往最近的水平方向拉：图横着滑出画幅
-        const target = it.dir >= 0 ? 0 : Math.PI
-        let d = target - it.ang
-        while (d > Math.PI) d -= Math.PI * 2
-        while (d < -Math.PI) d += Math.PI * 2
-        it.ang += Math.sign(d) * Math.min(Math.abs(d), SWEEP_TURN * dt)
-      } else {
-        it.z += RECEDE_V * dt
-      }
-    }
-    items = items.filter((it) =>
-      it.pinned ||
-      (it.phase === 0
-        ? it.z > Z_TURN * 0.5
-        : it.mode === 'sweep'
-          ? it.z > K / (R_MAX * 1.06) // 胀出画幅
-          : it.z < Z_FAR), // 退回消失点
-    )
-    if (items.length > MAX_ITEMS) {
-      items = items
-        .filter((it) => it.pinned)
-        .concat(items.filter((it) => !it.pinned).slice(-MAX_ITEMS))
-    }
+    const rings = ringSequence()
 
     // --- 画 ---
     ctx.fillStyle = '#04070e'
     ctx.fillRect(0, 0, W, H)
     drawGlow()
     drawMeridians()
-    drawRings()
-    drawStationRing()
+    drawMesh()
     drawDust(dt, vz)
-    drawItems()
+
+    // 环：从远到近画，近的盖住远的
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const g = rings[i]!
+      drawRingPhoto(g)
+      drawRingBody(g)
+    }
+
     drawVignette()
-    drawStationRingText()
+
+    // 环上的字画在暗角之后 —— 永远读得到
+    for (let i = rings.length - 1; i >= 0; i--) drawRingText(rings[i]!)
+
+    drawWarpLines()
     if (flash > 0) {
-      ctx.fillStyle = `rgba(200,230,255,${(flash * 0.5).toFixed(3)})`
+      ctx.fillStyle = `rgba(200,230,255,${(flash * 0.24).toFixed(3)})`
       ctx.fillRect(0, 0, W, H)
     }
+    drawZoom()
     drawCursor()
+
+    // 照片拿到眼前时，文字块让开 —— 两层字叠在一起谁也读不了
+    dom.classList.toggle('is-zoomed', !!zoomed)
 
     // 面板与里程尺
     updatePanel()
@@ -1094,17 +1161,15 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     const nextIdx = Math.min(N - 1, seg + 1)
     const next = stations[nextIdx]
     const label =
-      seg >= N - 1
-        ? '已是最后一站'
-        : `${next?.date ?? ''} ${next?.place ?? ''} · 还剩 ${N - 1 - seg} 站`
+      seg >= N - 1 ? '已是最后一站' : `${next?.date ?? ''} ${next?.place ?? ''} · 还剩 ${N - 1 - seg} 站`
     if (glabel.textContent !== label) glabel.textContent = label
     ticks.forEach((t, i) => t.classList.toggle('is-on', i < seg))
 
     if (options.debug) {
       readout.textContent =
-        `第 ${String(seg + 1).padStart(2, '0')} 段 · 段内进度 ${u.toFixed(2)} · 穿越 ${warp >= 0 ? `${(warp * 100).toFixed(0)}%` : '—'}\n` +
-        `速度 ${speed.toFixed(0)}px/s · 档 ${Math.floor(tier)}（放行 ${eligibleCount()} 张）· 流速 ${vz.toFixed(1)} 深度/s\n` +
-        `在场 ${items.length} 条 · 钉住 ${items.filter((i) => i.pinned).length} 条 · 轴心 ${ax.toFixed(0)},${ay.toFixed(0)}`
+        `第 ${String(seg + 1).padStart(2, '0')} 段 · 位置 ${pos.toFixed(2)} · 穿越 ${warp >= 0 ? `${(warp * 100).toFixed(0)}%` : '—'}\n` +
+        `速度 ${speed.toFixed(0)}px/s · 档 ${tier.toFixed(2)} · 流速 ${vz.toFixed(1)} 深度/s\n` +
+        `环 ${rings.length} 个（${rings.map((r) => r.no).join(' · ')}）· 前台 ${ax.toFixed(0)},${ay.toFixed(0)}`
     }
   }
 
@@ -1113,40 +1178,44 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   // -------------------------------------------------------------------------
 
   seg = Math.max(0, Math.min(N - 1, options.startIndex ?? 0))
-  loadSegment(seg)
-  px = lpx = viewCx()
-  py = lpy = viewCy()
-  ax = viewCx()
-  ay = viewCy()
+  pos = seg
+  warpTo = seg
+  photoFrom = seg
+  photoTo = seg
+  ax = baseX()
+  ay = baseY()
+  px = lpx = ax
+  py = lpy = ay
   if (forcedTier !== null) tier = forcedTier
-
-  /** 开场就给画面：先铺几条在不同深度上的内容，别等读者先动 */
-  function seedItems(): void {
-    for (let i = 0; i < 6; i++) {
-      spawn()
-      const last = items[items.length - 1]
-      if (last) {
-        last.z = Z_FAR - (Z_FAR - 3.2) * (i / 5)
-        last.age = 0.3
-      }
-    }
-  }
-  seedItems()
+  void preload(seg)
 
   return {
     dom,
 
     at: () => seg,
 
+    forward() {
+      jumpTo(seg + 1)
+    },
+
+    back() {
+      jumpTo(seg - 1)
+    },
+
     focus(index) {
       const next = Math.max(0, Math.min(N - 1, index))
       seg = next
-      u = 0
+      pos = next
+      warpTo = next
+      warpFrom = next
+      photoFrom = next
+      photoTo = next
+      hopReset()
       warp = -1
-      items = []
       shownStation = -1
-      loadSegment(seg)
-      seedItems()
+      zoomed = null
+      jumpAcc = 0
+      void preload(seg)
     },
 
     resize(w, h) {
@@ -1158,6 +1227,12 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       canvas.style.width = `${W}px`
       canvas.style.height = `${H}px`
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
+      // 画幅变了，取景要重新算：轴心按新画幅落位，指针也归位。
+      // 不归位的话，指针还停在旧画幅的坐标上，会把轴心拽偏一截。
+      ax = baseX()
+      ay = baseY()
+      px = lpx = ax
+      py = lpy = ay
     },
 
     frame(dt) {
@@ -1173,19 +1248,25 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     },
 
     debug() {
+      const rings = ringSequence()
       return {
         seg,
-        u,
+        pos,
         tier,
         speed,
-        travel,
         warp,
-        count: items.length,
+        count: rings.length,
         axis: [ax, ay],
-        items: items.map((it) => {
-          const s = place(it)
-          return { src: it.src, z: it.z, x: s.x, y: s.y, pinned: it.pinned }
-        }),
+        vanish: [vpx, vpy],
+        rings: rings.map((r) => ({
+          no: r.no,
+          title: r.st.title,
+          off: r.off,
+          z: r.z,
+          r: r.r,
+          a: r.a,
+        })),
+        zoomed,
       }
     },
 
@@ -1193,5 +1274,11 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       dom.remove()
       texCache.clear()
     },
+  }
+
+  /** 落位时把穿越状态清干净 */
+  function hopReset(): void {
+    warpDir = 1
+    flash = 0
   }
 }
