@@ -1,0 +1,35 @@
+{
+  "name": "@uncle7/starmap-2d",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "星图展示库（2D 版）：SVG 海图 + 光隧巡航。零运行时依赖",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "./dist/starmap-2d.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/starmap-2d.js"
+    },
+    "./content": {
+      "types": "./dist/content/reader.d.ts",
+      "import": "./dist/content/reader.js"
+    }
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "dev": "npm run gen:manifest && vite examples/demo",
+    "gen:manifest": "node examples/demo/scripts/gen-manifest.mjs",
+    "typecheck": "tsc --noEmit",
+    "check:tier": "tsc scripts/tier-check.ts --outDir scripts/.out --module esnext --target es2022 --moduleResolution bundler --rewriteRelativeImportExtensions --skipLibCheck && node scripts/.out/scripts/tier-check.js"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

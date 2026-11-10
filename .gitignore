@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+
+# check:tier 的临时编译产物
+scripts/.out*/
+
+# 内容库私有，不进代码仓库。
+# stations/ 在 examples/demo/public 下是一个指向 dj-intro/stations 的目录联接，
+# 跟着它提交会把 14 站文案和全部图片带进版本历史 —— 而内容库是用户私有的。
+examples/demo/public/stations
+
+# 由 gen:manifest 从内容库生成，含站点文案与图片路径，同样不入库。
+examples/demo/public/manifest.json

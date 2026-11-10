@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>星图 · starmap-2d demo</title>
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #04070e; }
+      body {
+        font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #cfe4ff;
+      }
+      #stage { position: fixed; inset: 0; }
+      #hint {
+        position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+        max-width: calc(100vw - 40px); text-align: center; line-height: 1.7;
+        font-size: 12px; letter-spacing: .16em; color: #5f86b8;
+        pointer-events: none; transition: opacity .6s ease;
+      }
+      #readout {
+        position: fixed; right: 20px; bottom: 18px;
+        font-size: 10px; letter-spacing: .1em; color: #3f6f9c;
+        pointer-events: none; white-space: pre; text-align: right;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="readout"></div>
+    <div id="hint">点击任意站点进入光隧</div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
