@@ -58,6 +58,7 @@ node tools/probe.mjs <url> <探针文件> [等多少毫秒]
 | `probe-drag.mjs` | 在 3D 版的 flow.html 光隧模式里模拟拖动 |
 | `probe-drag-canvas.mjs` | 在二级光隧里模拟拖动 —— 发牌靠指针位移，静止截图看不到 |
 | `probe-drag-state.mjs` | 拖动之后把在场元素的**真实坐标**读出来（看数不看图） |
+| `probe-stations.mjs` | 站与站之间空没空一拍 —— 量上一站最后一张活了多久 |
 
 ## 配套
 

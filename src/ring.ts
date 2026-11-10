@@ -40,16 +40,18 @@ export function drawRingBody(
   cy: number,
   r: number,
   alpha: number,
+  /** 线宽倍率 —— 章名环要粗一档，才能跟背景装饰环分开 */
+  weight = 1,
 ): void {
   if (alpha <= 0.02 || r <= 2) return
   ctx.save()
   ctx.globalAlpha = alpha
-  ctx.lineWidth = 1.6
+  ctx.lineWidth = 1.6 * weight
   ctx.strokeStyle = RING_INK.body
   ctx.beginPath()
   ctx.arc(cx, cy, r, 0, Math.PI * 2)
   ctx.stroke()
-  ctx.lineWidth = 1
+  ctx.lineWidth = 1 * weight
   ctx.strokeStyle = RING_INK.inner
   ctx.beginPath()
   ctx.arc(cx, cy, r * 0.955, 0, Math.PI * 2)
@@ -62,7 +64,7 @@ export function drawRingBody(
     const long = i % (ticks / 12) === 0
     const len = long ? 11 : 5
     ctx.strokeStyle = long ? RING_INK.tickLong : RING_INK.tick
-    ctx.lineWidth = 1
+    ctx.lineWidth = 1 * weight
     ctx.beginPath()
     ctx.moveTo(cx + Math.cos(t) * (r - len / 2), cy + Math.sin(t) * (r - len / 2))
     ctx.lineTo(cx + Math.cos(t) * (r + len / 2), cy + Math.sin(t) * (r + len / 2))
@@ -101,10 +103,12 @@ export function arcText(
   color: string,
   font = RING_FONT,
   maxSpan = Math.PI * 0.62,
+  /** 字重（CSS font-weight） */
+  weight = 400,
 ): void {
   if (!text || r <= 4) return
   ctx.save()
-  ctx.font = `${size}px ${font}`
+  ctx.font = `${weight} ${size}px ${font}`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   const chars = [...text]
@@ -113,7 +117,7 @@ export function arcText(
   const span = total / r
   if (span > maxSpan && span > 0) {
     const k = maxSpan / span
-    ctx.font = `${Math.max(7, size * k)}px ${font}`
+    ctx.font = `${weight} ${Math.max(7, size * k)}px ${font}`
     widths = chars.map((c) => ctx.measureText(c).width)
     total = widths.reduce((a, b) => a + b, 0)
   }
@@ -179,12 +183,27 @@ export interface Badge {
    * 旧的章名环只剩圈，名字交给当前站的那一枚。
    */
   textAlpha?: number
+  /**
+   * 站名摆哪条弧。
+   *
+   * - `top`（默认）：环外上弧 —— 名字在头顶
+   * - `bottom`：环外下弧 —— 名字在时间地点的下面，同一段环线之下
+   */
+  titleOn?: 'top' | 'bottom'
+  /**
+   * 加粗：环本体粗一档、字用粗字重。
+   *
+   * 章名环要跟背景那些装饰环分得开 —— 不然一屏套十几个环，
+   * 哪个是站名、哪个是装饰，看不出来。
+   */
+  bold?: boolean
 }
 
-/** 画一枚环徽章：本体 + 外弧站名 + 时间地点 */
+/** 画一枚环徽章：本体 + 站名 + 时间地点 */
 export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
   if (b.alpha <= 0.02) return
-  drawRingBody(ctx, b.cx, b.cy, b.r, b.alpha)
+  const bold = b.bold === true
+  drawRingBody(ctx, b.cx, b.cy, b.r, b.alpha, bold ? 1.7 : 1)
   const textAlpha = b.textAlpha ?? b.alpha
   if (textAlpha <= 0.02) return
   ctx.save()
@@ -194,18 +213,22 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
   // 模糊 = 字号缩小 + 描边变淡。字「化」掉，不是糊成一团。
   const blur = b.blur ?? 0
   const shrink = 1 - Math.min(0.45, blur * 0.14)
+  const weight = bold ? 700 : 400
+  // 站名：默认在环外上弧；'bottom' 时落到环外下弧（时间地点的下面）
+  const titleBottom = b.titleOn === 'bottom'
   arcText(
     ctx,
     b.title,
     b.cx,
     b.cy,
-    b.r * 1.1,
-    -Math.PI / 2,
-    1,
+    titleBottom ? b.r * 1.2 : b.r * 1.1,
+    titleBottom ? Math.PI / 2 : -Math.PI / 2,
+    titleBottom ? -1 : 1,
     titleSize * shrink,
     RING_INK.title,
     RING_FONT,
     b.titleSpan ?? Math.PI * 0.62,
+    weight,
   )
   const outer = b.metaOn === 'outer'
   arcText(
@@ -220,6 +243,7 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
     RING_INK.meta,
     RING_FONT,
     b.metaSpan ?? Math.PI * (outer ? 0.6 : 0.55),
+    weight,
   )
   ctx.restore()
 }

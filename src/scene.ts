@@ -350,6 +350,10 @@ export function createScene(
         // 站名往往很长，外弧留得宽些，字才不用缩到看不清
         titleSpan: Math.PI * 0.9,
         metaSpan: Math.PI * 0.7,
+        // 时间地点在环上，站名在同一段环线的下面（跟二级光隧一致）
+        titleOn: 'bottom',
+        // 环和字都加粗 —— 跟背景那些装饰环分得开
+        bold: true,
       }
       drawBadge(ctx, badge)
     }

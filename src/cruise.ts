@@ -66,7 +66,7 @@ const R0 = HALO_R0
 /** 指针走多少像素算发一张 */
 const SPAWN_PX = 80
 /** 保底：不管指针动不动，每隔这么久也发一张 */
-const SPAWN_GAP = 0.26
+const SPAWN_GAP = 0.36
 /** 一帧最多补几张 —— 指针瞬移时不该炸出几百张 */
 const MAX_EMIT = 4
 
@@ -75,22 +75,33 @@ const MAX_EMIT = 4
 const GROW_T = 0.9
 /** 照片离场要淡多久 —— 慢下来才看得清，也铺得开 */
 const EXIT_T = 5
-/** 章名环离场要淡多久 */
-const EXIT_HOP = 1.8
+/** 章名环离场要淡多久 —— 跟照片一样慢，环要「化」很久才不见 */
+const EXIT_HOP = 5
 /** 章名环上的字最多化多久 —— 化完了就只剩圈 */
 const TEXT_EXIT = 1.2
+/**
+ * 站与站之间空多久（秒）。
+ *
+ * 一站的照片飞完了，先空一拍，再出下一站的环，然后才是下一站的图。
+ * 按档位缩：慢慢读的时候留足一拍，快速跳过时就短一点（不然跳过也不快）。
+ */
+const STATION_GAP = [1, 0.6, 0.3]
 /** 照片最终多大（高，px） */
 const IMG_H = 150
 
 // --- 章名环 ---
 /** 环的初始半径 —— 从这么大体量出场，字才读得清 */
 const HOP_R0 = 96
-/** 环比照片慢多少 —— 慢一点，照片才追得上、穿得过去 */
-const HOP_K = 0.55
+/**
+ * 环比照片慢多少 —— 慢一点，照片才追得上、穿得过去。
+ *
+ * 也别太快：环涨到出屏，站名就跟着看不见了。
+ */
+const HOP_K = 0.32
 /** 环上站名的字号 */
-const HOP_TITLE = 12.5
+const HOP_TITLE = 14
 /** 环上时间地点的字号 */
-const HOP_META = 10
+const HOP_META = 11
 
 /** 黄金角：照片的角度按它散开，围着光心才铺得匀 */
 const GOLDEN = 2.39996323
@@ -235,6 +246,10 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   let cursorImage = 0
   /** 这一站的环还没发 */
   let ringPending = true
+  /** 下一站最早什么时候能发（站与站之间要空一拍） */
+  let waitUntil = 0
+  /** 上一次发牌的时刻 */
+  let lastEmitT = 0
   /** 在场元素 */
   let live: El[] = []
   /** 照片的角度游标 */
@@ -317,6 +332,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
    * 走完最后一站就从头再来 —— 光隧是一条不断的流，停下来画面就空了。
    */
   function emit(): void {
+    // 站与站之间空一拍 —— 上一站的图飞完了，先静一下
+    if (clock < waitUntil) return
     for (;;) {
       if (cursorStation >= N) {
         cursorStation = 0
@@ -341,6 +358,7 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
         })
         seg = cursorStation
         shownStation = -1
+        lastEmitT = clock
         preload(Math.min(N - 1, cursorStation + 1))
         return
       }
@@ -363,12 +381,16 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
         })
         angSeq++
         cursorImage++
+        lastEmitT = clock
         return
       }
-      // 这一站在当前档位下发完了 → 下一站
+      // 这一站在当前档位下发完了 → 空一拍，下一站的环再出来
       cursorStation++
       cursorImage = 0
       ringPending = true
+      // 这一拍从**最后一张照片**算起，不是从「发现发完了」算起
+      waitUntil = lastEmitT + (STATION_GAP[tier] ?? 1)
+      return
     }
   }
 
@@ -521,10 +543,14 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       meta: whenOf(st),
       titleSize: HOP_TITLE,
       metaSize: HOP_META,
-      // 外弧留得宽 —— 站名往往很长；内弧留给时间地点
+      // 外弧留得宽 —— 站名往往很长
       titleSpan: Math.PI * 1.05,
       metaSpan: Math.PI * 0.8,
+      // 时间地点在环上，站名就在同一段环线的下面
       metaOn: 'inner',
+      titleOn: 'bottom',
+      // 环和字都加粗 —— 跟背景那些装饰环分得开
+      bold: true,
       // 旧环的字先化掉 —— 同时只有一枚环带字，名字才不会叠成一堆
       textAlpha: textAlphaOf(el),
       // 离场时字慢慢「化」掉
