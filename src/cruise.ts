@@ -12,11 +12,13 @@
  *   ◎             ◎
  * ```
  *
- * ## 发牌靠指针
+ * ## 发牌靠指针，跟着档位
  *
  * 指针每划过 `SPAWN_PX` 像素就发一张；指针不动，也有保底的定时器在发。
- * 所以画面永远不会停 ——「一直有照片飞出来」是这儿的默认状态，
- * 不是「鼠标动了才有」。
+ * **两者的间隔都跟着档位走** —— 指针越快，档位越高，出图越密。
+ *
+ * 指针停住 = 档 0 = 最慢的一档：不会停在这儿还在哗哗出图。
+ * 快速扫过 = 档 2：这才哗哗出。
  *
  * 同屏数量**没有上限**：它由「存活时长 ÷ 发射间隔」自然决定。
  * 飞得慢、活得久，屏上就堆得多。
@@ -38,7 +40,7 @@
  *
  * 环涨的节奏和照片**完全一样**（同一条流），所以照片始终在环里面飞。
  * 环一路涨到**满屏** —— 涨到把整块屏幕都套进去为止 —— 然后停在那儿，
- * 再慢慢化掉。下一站的环不等它化完：名字交出去，圈留着继续涨。
+ * 把站名亮到这一站结束，再慢慢化掉。
  *
  * ## 确定性
  *
@@ -66,10 +68,21 @@ const V_K = 0.12
 const R0 = HALO_R0
 
 // --- 发牌 ---
-/** 指针走多少像素算发一张 */
-const SPAWN_PX = 80
-/** 保底：不管指针动不动，每隔这么久也发一张 */
-const SPAWN_GAP = 0.36
+/** 慢档的位移阈值（px）与保底间隔（秒）—— 数组下标越界时的兜底 */
+const SPAWN_PX_SLOW = 220
+const SPAWN_GAP_SLOW = 0.8
+/**
+ * 指针走多少像素发一张，按档位。
+ *
+ * 慢档要划很远才发一张 —— 指针慢，屏幕也跟着慢。
+ */
+const SPAWN_PX = [SPAWN_PX_SLOW, 120, 60]
+/**
+ * 保底发牌间隔（秒），按档位。
+ *
+ * 指针不动时按这个节奏发：慢档一张要等 0.8 秒，不是停在这儿还在出图。
+ */
+const SPAWN_GAP = [SPAWN_GAP_SLOW, 0.42, 0.2]
 /** 一帧最多补几张 —— 指针瞬移时不该炸出几百张 */
 const MAX_EMIT = 4
 
@@ -324,8 +337,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
    * 让一个元素开始离场。
    *
    * 照片：被下一张顶走就走。
-   * 环：**涨到满屏**才走 —— 涨的时候它一直挂着，是这一站最亮的一个东西；
-   * 下一站的环来了也可以把它顶走（那样化得快些，屏幕上不会堆一叠圈）。
+   * 环：**下一站的环来了才走** —— 它会一路涨到满屏停在那儿，
+   * 把站名亮到这一站结束，再慢慢化掉。
    */
   function startExit(el: El): void {
     if (el.exitT !== null) return
@@ -709,24 +722,26 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     ly += (py - ly) * lag
 
     // --- 发牌 ---
+    // 间隔跟着档位走：指针停住 = 最慢的一档
+    const spawnPx = SPAWN_PX[tier] ?? SPAWN_PX_SLOW
+    const spawnGap = SPAWN_GAP[tier] ?? SPAWN_GAP_SLOW
     spawnAcc += moved
     gapAcc += dt
     let budget = MAX_EMIT
     while (budget > 0) {
-      if (spawnAcc >= SPAWN_PX) spawnAcc -= SPAWN_PX
-      else if (gapAcc >= SPAWN_GAP) gapAcc -= SPAWN_GAP
+      if (spawnAcc >= spawnPx) spawnAcc -= spawnPx
+      else if (gapAcc >= spawnGap) gapAcc -= spawnGap
       else break
       budget--
       emit()
     }
 
     // --- 离场 ---
-    // 环涨到满屏就停住，然后才开始慢慢化掉
+    // 环涨到满屏就停在那儿（到了最大点），化开要等这一站结束
     for (const el of live) {
       if (el.kind !== 'hop') continue
-      // 光心动了，「满屏」的半径也跟着动 —— 只涨不缩，环才不会忽然缩回去
+      // 窗口变了，「满屏」的半径也跟着变 —— 只涨不缩，环才不会忽然缩回去
       if (hopMaxR() > el.maxR) el.maxR = hopMaxR()
-      if (el.exitT === null && placeHop(el).r >= el.maxR - 0.5) startExit(el)
     }
     live = live.filter((el) => {
       if (el.exitT === null) return true
