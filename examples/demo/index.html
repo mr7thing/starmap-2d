@@ -18,10 +18,11 @@
         font-size: 12px; letter-spacing: .16em; color: #5f86b8;
         pointer-events: none; transition: opacity .6s ease;
       }
+      /* 读数在右上角 —— 库自己的读数占着左下角，别打架 */
       #readout {
-        position: fixed; left: 20px; bottom: 18px;
+        position: fixed; right: 20px; top: 18px;
         font-size: 10px; letter-spacing: .1em; color: #3f6f9c;
-        pointer-events: none; white-space: pre; text-align: left;
+        pointer-events: none; white-space: pre; text-align: right;
         font-family: ui-monospace, Menlo, Consolas, monospace;
       }
     </style>

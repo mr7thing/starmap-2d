@@ -2,7 +2,7 @@
   "name": "@uncle7/starmap-2d",
   "version": "0.1.0",
   "type": "module",
-  "description": "星图展示库（2D 版）：SVG 海图 + 光隧巡航。零运行时依赖",
+  "description": "星图展示库（2D 版）：环行场景 + 光隧元素队列。零运行时依赖",
   "license": "MIT",
   "files": [
     "dist",
