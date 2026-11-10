@@ -53,8 +53,11 @@ node tools/probe.mjs <url> <探针文件> [等多少毫秒]
 
 | 文件 | 看什么 |
 |---|---|
-| `probe-queue.mjs` | 二级队列的时序 —— `[环][图][图]…[环][图]…` 的顺序对不对 |
+| `probe-queue.mjs` | 二级的出场时序 —— `[环][图][图]…[环][图]…` 的顺序对不对 |
 | `probe-read.mjs` | 页面里有几个读数元素、分别在哪（叠字排查） |
+| `probe-drag.mjs` | 在 3D 版的 flow.html 光隧模式里模拟拖动 |
+| `probe-drag-canvas.mjs` | 在二级光隧里模拟拖动 —— 发牌靠指针位移，静止截图看不到 |
+| `probe-drag-state.mjs` | 拖动之后把在场元素的**真实坐标**读出来（看数不看图） |
 
 ## 配套
 
@@ -62,4 +65,12 @@ node tools/probe.mjs <url> <探针文件> [等多少毫秒]
 
 ```
 node tools/shot.mjs <url> <out.png> [等待毫秒] ["页面脚本" | @脚本文件]
+```
+
+本仓还有一个 `shot-drag.mjs` —— `shot.mjs` 只能「导航 → 等 → 跑一次脚本 → 截一张」，
+拖动这类要持续几秒的动作它抓不到（脚本跑完鼠标就不动了）。
+`shot-drag.mjs` 会**等脚本跑完再截**，正好对上：
+
+```
+node tools/shot-drag.mjs <url> <out.png> <脚本文件> [脚本跑完后等多少毫秒]
 ```

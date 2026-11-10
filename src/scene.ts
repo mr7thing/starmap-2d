@@ -160,8 +160,10 @@ export function createScene(
 
   const speedTrack = new SpeedTracker()
   const tierTrack = new TierTracker()
-  const field = createField({ haloGap: 168, haloCount: 7, haloSpeed: 88 })
+  const field = createField()
   let tier = 0
+  /** 流走过的距离（px）—— 光环按它涨开 */
+  let flow = 0
 
   // --- 取景 ---
   function panelWidth(): number {
@@ -302,6 +304,7 @@ export function createScene(
   function tick(dtRaw: number): void {
     const dt = frozen ? 0 : Math.min(0.05, dtRaw)
     clock += dt
+    flow += dt * 110
 
     const moved = Math.hypot(px - lpx, py - lpy)
     lpx = px
@@ -328,7 +331,7 @@ export function createScene(
     // --- 画 ---
     ctx.fillStyle = '#04070e'
     ctx.fillRect(0, 0, W, H)
-    field.draw(ctx, W, H, lx, ly, dt, tier)
+    field.draw(ctx, W, H, lx, ly, dt, tier, flow)
 
     // 环：从远到近画
     for (let k = N - 1; k >= 0; k--) {
@@ -341,9 +344,12 @@ export function createScene(
         r: s.r,
         alpha: s.alpha,
         title: st.title,
-        meta: `${String(k + 1).padStart(2, '0')} · ${st.date ?? ''} · ${st.place ?? ''}`,
+        meta: whenOf(st),
         titleSize: Math.max(11, Math.min(26, s.r * 0.115)),
         metaSize: Math.max(9, Math.min(18, s.r * 0.068)),
+        // 站名往往很长，外弧留得宽些，字才不用缩到看不清
+        titleSpan: Math.PI * 0.9,
+        metaSpan: Math.PI * 0.7,
       }
       drawBadge(ctx, badge)
     }
@@ -396,25 +402,15 @@ export function createScene(
     const st = stations[index]
     if (!st) return
     panel.replaceChildren()
-    const no = document.createElement('span')
-    no.className = 'sm2-scene__no'
-    no.textContent = `${String(index + 1).padStart(2, '0')} / ${N}`
-    panel.append(no)
+    // 第一行是时间地点，下面是站名 —— 就这两行
+    const when = document.createElement('span')
+    when.className = 'sm2-scene__when'
+    when.textContent = whenOf(st)
+    panel.append(when)
     const title = document.createElement('span')
     title.className = 'sm2-scene__title'
     title.textContent = st.title
     panel.append(title)
-    for (const [cls, text] of [
-      ['sm2-scene__lead', st.lead],
-      ['sm2-scene__role', st.role],
-      ['sm2-scene__role', st.audience],
-    ] as const) {
-      if (!text) continue
-      const el = document.createElement('span')
-      el.className = cls
-      el.textContent = text
-      panel.append(el)
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -479,3 +475,12 @@ export function createScene(
 }
 
 export type { Station }
+
+// ---------------------------------------------------------------------------
+
+/** 时间地点 —— 面板和环上用的是同一句 */
+function whenOf(st: Station): string {
+  const d = st.date ? st.date.replace(/-/g, '.') : ''
+  const p = st.short || st.place || ''
+  return [d, p].filter(Boolean).join(' · ')
+}

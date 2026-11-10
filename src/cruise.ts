@@ -1,35 +1,41 @@
 /**
- * 二级 · 光隧 —— 一条元素队列。
+ * 二级 · 光隧 —— 一条不断往外淌的流。
  *
  * ## 一句话
  *
- * 队列里只有两种东西：**章名环**（带项目名）和**照片**。
- * 它们**同一套逻辑** —— 出生、胀大、被下一条顶走、淡出。
- * 环只是「大一点、带字」的那种元素。
+ * 鼠标所在的地方是源头。照片从那儿一张张冒出来，越飞越远；
+ * 背景是一圈圈涨开的光环 —— 光环和照片走的是**同一条流**。
  *
  * ```
- *   ◎ 环(项目名)  →  图  图  图  →  ◎ 环(下一个项目名)  →  图  图 …
+ *        ◎ 光圈（带站名）
+ *      ◎    ◎      ◎     ← 照片从鼠标位置散开
+ *   ◎             ◎
  * ```
  *
- * ## 为什么不是「一站一屏」
+ * ## 发牌靠指针
  *
- * 早先的版本一站只放一张图，读者要一站一站地点进去 —— 图片浏览被限死了。
- * 现在一站的照片**一张张冒出来**，这一站冒完了，下一个项目的环带字飞出来，
- * 接着是下一个项目的照片。整条旅程是一条不断的流。
+ * 指针每划过 `SPAWN_PX` 像素就发一张；指针不动，也有保底的定时器在发。
+ * 所以画面永远不会停 ——「一直有照片飞出来」是这儿的默认状态，
+ * 不是「鼠标动了才有」。
  *
- * ## 元素怎么动
+ * 同屏数量**没有上限**：它由「存活时长 ÷ 发射间隔」自然决定。
+ * 飞得慢、活得久，屏上就堆得多。
  *
- * 照抄「流动感实验台」里 tunnel 模式那套：
+ * ## 档位是「跳过」
  *
- * 1. **光心跟着指针走**（带滞后）—— 光在屏幕上随意游动。
- * 2. 元素**从光心里冒出来**，一边冒一边胀大（轨道半径 `R₀ + age × GROW`）。
- * 3. 下一条出生时，上一条开始离场：淡出（`EXIT_SPACING` 之内淡完）。
- * 4. 照片按黄金角散开；章名环固定在光心正上方，字始终朝上读得清。
+ * 慢 = 全放（高亮 + 概览 + 细节），快 = 只放高亮。
+ * 快速操作时把细节跳过，慢下来才一张张看得清。
  *
- * ## 档位不筛图
+ * ## 节奏：慢
  *
- * 档位（`TierTracker`）只管**画面密度**（星尘多少），不筛照片 ——
- * 一站的照片必须全部冒出来，这是浏览的底线。
+ * 全部按秒控制，不按「流相位」：
+ * 胀大 0.9 秒、离场 3.6 秒、环离场 2.6 秒。
+ * 慢到能看清一张照片，再看它化掉。
+ *
+ * ## 章名环
+ *
+ * 每一站先飞出一枚环：**外弧是站名，内弧是时间地点**。
+ * 这一站的照片全部飞完，环才开始淡出；下一站的环不等它淡完。
  *
  * ## 确定性
  *
@@ -38,46 +44,53 @@
  */
 
 import { drawBadge, type Badge } from './ring.ts'
-import { createField } from './field.ts'
-import type { Manifest, Station, Tier } from './types.ts'
+import { createField, HALO_R0 } from './field.ts'
+import { orderedImages, type ImageRef, type Manifest, type Station, type Tier } from './types.ts'
 import { SpeedTracker, TierTracker } from './window.ts'
 
-// --- 元素 ---
-/** 相邻两个元素之间隔多少流相位 */
-const SPACING = 170
-/** 照片离场要淡多久（流相位） */
-const EXIT_SPACING = 300
-/** 章名环离场要淡多久 —— 比照片久，标题得读得完 */
-const EXIT_RING = 900
-/** 元素出生时的轨道半径 */
-const R0 = 26
-/** 照片每单位流相位往外冲多远 */
-const GROW = 0.9
-/** 照片涨到这么大就不涨了（否则会胀出画幅） */
-const IMG_MAX_AGE = 240
-/** 章名环的初始半径 —— 从小涨大，「放大出来明显点」 */
-const RING_R0 = 30
-/** 章名环涨到这么大就停 */
-const RING_R_MAX = 92
+// --- 流 ---
 /**
- * 章名环最终停在光心上方多远。
+ * 指针静止时的流速（px/s）。
  *
- * 要避开照片带 —— 照片从光心往外冲，会从环心穿过去。
- * 环停在照片上方一点，标题才不会被压住。
+ * 这不只是「飞多快」—— 它同时决定照片铺开的范围：
+ * 铺开的半径 ≈ 发射频率 × 存活时长 × 流速。
+ * 太小就挤成一团，太大就只剩空屏。
  */
-const RING_PARK = 158
-/** 图的半高占轨道半径的比例 */
-const IMG_K = 0.42
-
-// --- 流速 ---
-/** 静止时的流速（相位/秒）：画面永远在动，不会冻住 */
-const V_BASE = 130
+const V_BASE = 46
 /** 每 px/s 指针速度换来的额外流速 */
-const V_K = 0.5
+const V_K = 0.12
+/** 元素出生时的半径（px）—— 和第一圈光环同一个半径 */
+const R0 = HALO_R0
 
-// --- 交互 ---
-/** 指针横向划过多少像素算翻一站 */
-const SCRUB_PX = 160
+// --- 发牌 ---
+/** 指针走多少像素算发一张 */
+const SPAWN_PX = 80
+/** 保底：不管指针动不动，每隔这么久也发一张 */
+const SPAWN_GAP = 0.26
+/** 一帧最多补几张 —— 指针瞬移时不该炸出几百张 */
+const MAX_EMIT = 4
+
+// --- 生长与离场（秒） ---
+/** 从 16% 胀到 100% 要多久 */
+const GROW_T = 0.9
+/** 照片离场要淡多久 —— 慢下来才看得清，也铺得开 */
+const EXIT_T = 5
+/** 章名环离场要淡多久 */
+const EXIT_HOP = 1.8
+/** 章名环上的字最多化多久 —— 化完了就只剩圈 */
+const TEXT_EXIT = 1.2
+/** 照片最终多大（高，px） */
+const IMG_H = 150
+
+// --- 章名环 ---
+/** 环的初始半径 —— 从这么大体量出场，字才读得清 */
+const HOP_R0 = 96
+/** 环比照片慢多少 —— 慢一点，照片才追得上、穿得过去 */
+const HOP_K = 0.55
+/** 环上站名的字号 */
+const HOP_TITLE = 12.5
+/** 环上时间地点的字号 */
+const HOP_META = 10
 
 /** 黄金角：照片的角度按它散开，围着光心才铺得匀 */
 const GOLDEN = 2.39996323
@@ -98,7 +111,7 @@ export interface CruiseOptions {
 export interface CruiseDebug {
   /** 当前站 */
   seg: number
-  /** 流相位 */
+  /** 流走过的距离（px） */
   flow: number
   tier: number
   speed: number
@@ -107,7 +120,7 @@ export interface CruiseDebug {
   /** 光心 */
   light: [number, number]
   /** 在场元素 */
-  live: { kind: string; k: number; age: number; alpha: number }[]
+  live: { kind: string; k: number; age: number; alpha: number; x: number; y: number; r: number }[]
   /** 放大看的那张 */
   zoomed: string | null
 }
@@ -130,21 +143,23 @@ export interface CruiseView {
   dispose(): void
 }
 
-/** 队列里的一个元素 */
+/** 流里的一个东西：章名环或一张照片 */
 interface El {
-  kind: 'ring' | 'img'
+  kind: 'hop' | 'img'
   /** 属于第几站 */
   k: number
   /** 图片路径（环没有） */
   src: string | null
-  /** 出生的流相位 */
-  born: number
-  /** 角度 */
+  /** 出生的时刻（秒） */
+  bornT: number
+  /** 出生的流位置（px） */
+  bornF: number
+  /** 角度（照片用） */
   ang: number
-  /** 档位（决定图的清晰度来源） */
-  tier: number
-  /** 离场计时（流相位），0 = 还在场上 */
-  exit: number
+  /** 离场的时刻（秒），null = 还在场上 */
+  exitT: number | null
+  /** 离场要淡多久（秒） */
+  exitDur: number
 }
 
 export function createCruise(manifest: Manifest, options: CruiseOptions = {}): CruiseView {
@@ -182,17 +197,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   }
 
   // --- 内容 ---
-  /**
-   * 每站的照片，按档位从高到低排成一条。
-   *
-   * **不按档位筛** —— 一站的照片必须全部出场。
-   * 高亮的先走，细节的后走，读者的注意力跟着走。
-   */
-  const pools: string[][] = stations.map((st) => {
-    const byTier: string[][] = [[], [], []]
-    for (const im of st.images ?? []) byTier[Math.min(2, im.tier | 0)]!.push(im.src)
-    return [...byTier[0]!, ...byTier[1]!, ...byTier[2]!]
-  })
+  /** 每站的照片，按 tier 从低到高排好（高亮在前） */
+  const pools: ImageRef[][] = stations.map((st) => orderedImages(st))
 
   const texCache = new Map<string, HTMLImageElement>()
   function tex(src: string): HTMLImageElement | null {
@@ -206,8 +212,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   }
 
   function preload(k: number): void {
-    for (const src of pools[k] ?? []) {
-      const t = tex(src)
+    for (const img of pools[k] ?? []) {
+      const t = tex(img.src)
       if (t && !t.complete) void t.decode?.().catch(() => {})
     }
   }
@@ -217,20 +223,27 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   let H = 1
   let DPR = 1
 
-  let flow = 0 // 流相位
+  let clock = 0 // 场景时间（秒）
+  let flow = 0 // 流走过的距离（px）
   let seg = 0 // 当前站
   let tier = 0
   let speed = 0
 
-  /** 发射游标：先发这一站的章名环，再发它的照片 */
+  /** 正在发的站 */
   let cursorStation = 0
-  let cursorImage = -1
-  /** 上一次发射时的流相位 */
-  let lastEmit = -SPACING
+  /** 这一站已经发了几张图 */
+  let cursorImage = 0
+  /** 这一站的环还没发 */
+  let ringPending = true
   /** 在场元素 */
   let live: El[] = []
-  /** 照片角度游标 */
+  /** 照片的角度游标 */
   let angSeq = 0
+
+  /** 指针位移累积：走够 SPAWN_PX 就发一张 */
+  let spawnAcc = 0
+  /** 定时器累积：保证指针不动也有东西飞出来 */
+  let gapAcc = 0
 
   let px = 0
   let py = 0
@@ -238,8 +251,6 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   let lpy = 0
   let pointerIn = false
   let frozen = false
-  /** 横向累计位移：划过阈值就翻一站 */
-  let scrubAcc = 0
 
   /** 光心（跟着指针走） */
   let lx = 0
@@ -253,56 +264,112 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   const field = createField()
 
   // -------------------------------------------------------------------------
-  // 发射
+  // 放行到第几层
   // -------------------------------------------------------------------------
 
-  /** 发下一个元素。返回 false = 队列发完了 */
-  function emitNext(): boolean {
-    for (;;) {
-      if (cursorStation >= N) return false
-      if (cursorImage === -1) {
-        // 章名环：这一站的标题，从头顶偏上飞出来
-        live.push({
-          kind: 'ring',
-          k: cursorStation,
-          src: null,
-          born: flow,
-          ang: -Math.PI / 2 + 0.22,
-          tier,
-          exit: 0,
-        })
-        cursorImage = 0
-        return true
-      }
-      const imgs = pools[cursorStation] ?? []
-      if (cursorImage < imgs.length) {
-        const src = imgs[cursorImage]!
-        live.push({
-          kind: 'img',
-          k: cursorStation,
-          src,
-          born: flow,
-          // 照片按黄金角散开；第一张朝右，避开正上方的章名环
-          ang: 0.6 + angSeq * GOLDEN,
-          tier,
-          exit: 0,
-        })
-        angSeq++
-        cursorImage++
-        return true
-      }
-      // 这一站发完了 → 下一站
-      cursorStation++
-      cursorImage = -1
+  /**
+   * 当前放行到第几层。
+   *
+   * **慢 = 全放，快 = 只放高亮** —— 和「档位是发射池的来源层」正好相反：
+   * 快速操作时跳过细节，慢下来才一张张看清。
+   */
+  function release(): Tier {
+    return (2 - tier) as Tier
+  }
+
+  /** 这一站在当前档位下放行的图 */
+  function allowed(k: number): ImageRef[] {
+    const max = release()
+    return (pools[k] ?? []).filter((im) => im.tier <= max)
+  }
+
+  // -------------------------------------------------------------------------
+  // 离场
+  // -------------------------------------------------------------------------
+
+  /**
+   * 让一个元素开始离场。
+   *
+   * **文字化开的时间跟这一站待了多久走**：
+   * 慢慢读的时候，站名要「慢慢模糊」；快速跳过的时候，站名就得赶紧走 ——
+   * 否则十几个站名会同时挂在屏幕上，叠成一堆字。
+   */
+  function startExit(el: El): void {
+    if (el.exitT !== null) return
+    el.exitT = clock
+    if (el.kind === 'hop') {
+      const lived = clock - el.bornT
+      el.exitDur = Math.max(0.35, Math.min(TEXT_EXIT, lived * 0.5))
     }
   }
 
-  function panelWidth(): number {
-    return Math.min(260, Math.max(0, W - 56))
-  }
-  /** 文字面板的左边界 */
-  function panelLeft(): number {
-    return W - panelWidth() - 28
+  // -------------------------------------------------------------------------
+  // 发射
+  // -------------------------------------------------------------------------
+
+  /**
+   * 发下一个东西。
+   *
+   * 一站的东西按顺序发：**章名环 → 这一站的全部照片**。
+   * 环发出去的时候，上一站的环开始离场；
+   * 照片发出去的时候，上一张照片开始离场。
+   *
+   * 走完最后一站就从头再来 —— 光隧是一条不断的流，停下来画面就空了。
+   */
+  function emit(): void {
+    for (;;) {
+      if (cursorStation >= N) {
+        cursorStation = 0
+        cursorImage = 0
+        ringPending = true
+      }
+      if (ringPending) {
+        ringPending = false
+        // 上一站的环开始离场 —— 下一站不等它淡完
+        for (const el of live) {
+          if (el.kind === 'hop') startExit(el)
+        }
+        live.push({
+          kind: 'hop',
+          k: cursorStation,
+          src: null,
+          bornT: clock,
+          bornF: flow,
+          ang: 0,
+          exitT: null,
+          exitDur: EXIT_HOP,
+        })
+        seg = cursorStation
+        shownStation = -1
+        preload(Math.min(N - 1, cursorStation + 1))
+        return
+      }
+      const pool = allowed(cursorStation)
+      if (cursorImage < pool.length) {
+        const img = pool[cursorImage]!
+        // 新的照片把在场的照片顶走（开始离场）
+        for (const el of live) {
+          if (el.kind === 'img') startExit(el)
+        }
+        live.push({
+          kind: 'img',
+          k: cursorStation,
+          src: img.src,
+          bornT: clock,
+          bornF: flow,
+          ang: angSeq * GOLDEN,
+          exitT: null,
+          exitDur: EXIT_T,
+        })
+        angSeq++
+        cursorImage++
+        return
+      }
+      // 这一站在当前档位下发完了 → 下一站
+      cursorStation++
+      cursorImage = 0
+      ringPending = true
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -323,7 +390,6 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       lpx = px
       lpy = py
     }
-    scrubAcc += x - lpx
     px = x
     py = y
     if (hintEl) hintEl.style.opacity = '0'
@@ -338,12 +404,11 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     // 点图 = 拿到眼前来看
     for (const el of live) {
       if (el.kind !== 'img' || !el.src) continue
-      const s = place(el)
+      const s = placeImg(el)
       const t = tex(el.src)
       if (!t) continue
-      const h = s.r * IMG_K * 2
-      const w = h * (t.naturalWidth / t.naturalHeight)
-      if (Math.abs(x - s.x) <= w / 2 && Math.abs(y - s.y) <= h / 2) {
+      const w = s.h * (t.naturalWidth / t.naturalHeight)
+      if (Math.abs(x - s.x) <= w / 2 && Math.abs(y - s.y) <= s.h / 2) {
         zoomed = el.src
         return
       }
@@ -366,13 +431,12 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   /** 跳到第 k 站：重新从那一站的章名环开始发 */
   function moveTo(k: number): void {
     const next = Math.max(0, Math.min(N - 1, k))
-    if (next === seg && cursorStation === next) return
     seg = next
     cursorStation = next
-    cursorImage = -1
+    cursorImage = 0
+    ringPending = true
     // 旧的元素开始离场，不硬切
-    for (const el of live) el.exit = Math.max(el.exit, flow)
-    lastEmit = flow
+    for (const el of live) startExit(el)
     shownStation = -1
     zoomed = null
     preload(next)
@@ -387,58 +451,47 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     y: number
     /** 轨道半径 */
     r: number
-    alpha: number
+    /** 高（照片用） */
+    h: number
   }
 
   /**
-   * 元素现在在哪儿。
+   * 照片现在在哪儿。
    *
-   * **全都从光心往外飞** —— 环和照片同一套逻辑，只是：
-   * - 环涨得慢（小），所以它留在光心附近，标题读得清
-   * - 照片涨得快（大），所以它冲到前面去
-   * - 角度都按黄金角散开，谁也不压谁
-   *
-   * 环的轨道角会**慢慢收回到正上方**：飞出去是为了「冒出来」，
-   * 但标题最终得停在能读的位置 —— 停在头顶正上方最稳。
+   * 半径 `R0 + (flow - 出生的流位置)` —— 和光环是同一条流，
+   * 所以照片永远从光环里长出来。
    */
-  function place(el: El): Spot {
-    const age = flow - el.born
-    if (el.kind === 'ring') {
-      // 从光心冒出来，慢慢涨大，最后停在光心上方
-      const t = Math.min(1, age / 140)
-      const ease = t * t * (3 - 2 * t)
-      const r = RING_R0 + (RING_R_MAX - RING_R0) * ease
-      // 轨道角从出场的角度收回到正上方
-      const ang = el.ang + (-Math.PI / 2 - el.ang) * ease
-      const dist = RING_PARK * ease
-      return {
-        x: lx + Math.cos(ang) * dist,
-        y: ly + Math.sin(ang) * dist,
-        r,
-        alpha: 1,
-      }
-    }
-    const rr = R0 + Math.min(age, IMG_MAX_AGE) * GROW
+  function placeImg(el: El): Spot {
+    const r = R0 + Math.max(0, flow - el.bornF)
+    const grow = 0.16 + 0.84 * smooth((clock - el.bornT) / GROW_T)
+    // 越飞越远就略微大一点 —— 一点透视，不多
+    const depth = 0.7 + 0.45 * Math.min(1, r / 420)
     return {
-      x: lx + Math.cos(el.ang) * rr,
-      y: ly + Math.sin(el.ang) * rr,
-      r: rr,
-      alpha: 1,
+      x: lx + Math.cos(el.ang) * r,
+      y: ly + Math.sin(el.ang) * r,
+      r,
+      h: IMG_H * grow * depth,
     }
+  }
+
+  /** 章名环现在在哪儿 —— 它套在光心上，照片从它里面穿出去 */
+  function placeHop(el: El): Spot {
+    const r = HOP_R0 + Math.max(0, flow - el.bornF) * HOP_K
+    return { x: lx, y: ly, r, h: 0 }
   }
 
   // -------------------------------------------------------------------------
   // 画
   // -------------------------------------------------------------------------
 
-  /** 一个图元素 */
+  /** 一张照片 */
   function drawImage(el: El, alpha: number): void {
     if (!el.src) return
     const t = tex(el.src)
     if (!t) return
-    const s = place(el)
+    const s = placeImg(el)
     const ar = t.naturalWidth / t.naturalHeight
-    const h = s.r * IMG_K * 2
+    const h = s.h
     const w = h * ar
     // 飘到文字面板下面的图要淡出 —— 文字不能被照片压住
     const into = s.x + w / 2 - (panelLeft() - 24)
@@ -454,24 +507,28 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     ctx.restore()
   }
 
-  /** 一个章名环 —— 和照片同一套逻辑，只是大一点、带字 */
-  function drawRingElement(el: El, alpha: number): void {
+  /** 一枚章名环 —— 外弧站名，内弧时间地点 */
+  function drawHop(el: El, alpha: number): void {
     const st = stations[el.k]
     if (!st) return
-    const s = place(el)
+    const s = placeHop(el)
     const badge: Badge = {
       cx: s.x,
       cy: s.y,
       r: s.r,
       alpha,
       title: st.title,
-      meta: `${String(el.k + 1).padStart(2, '0')} · ${st.date ?? ''} · ${st.place ?? ''}`,
-      // 字号跟着环走，但封顶 —— 字跟着环无限涨会糊成一团
-      titleSize: Math.max(13, Math.min(22, s.r * 0.13)),
-      metaSize: Math.max(9, Math.min(15, s.r * 0.08)),
-      titleSpan: Math.PI * 0.72,
-      // 环心要给照片飞过 —— 时间地点摆环外下弧，别被压住
-      metaOn: 'outer',
+      meta: whenOf(st),
+      titleSize: HOP_TITLE,
+      metaSize: HOP_META,
+      // 外弧留得宽 —— 站名往往很长；内弧留给时间地点
+      titleSpan: Math.PI * 1.05,
+      metaSpan: Math.PI * 0.8,
+      metaOn: 'inner',
+      // 旧环的字先化掉 —— 同时只有一枚环带字，名字才不会叠成一堆
+      textAlpha: textAlphaOf(el),
+      // 离场时字慢慢「化」掉
+      blur: blurOf(el),
     }
     drawBadge(ctx, badge)
   }
@@ -517,31 +574,29 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   // 面板
   // -------------------------------------------------------------------------
 
+  function panelWidth(): number {
+    return Math.min(260, Math.max(0, W - 56))
+  }
+  /** 文字面板的左边界 */
+  function panelLeft(): number {
+    return W - panelWidth() - 28
+  }
+
   function updatePanel(): void {
     if (shownStation === seg) return
     shownStation = seg
     const st = stations[seg]
     if (!st) return
     panel.replaceChildren()
-    const no = document.createElement('span')
-    no.className = 'sm2-cruise__no'
-    no.textContent = `${String(seg + 1).padStart(2, '0')} / ${N}`
-    panel.append(no)
+    // 第一行是时间地点，下面是站名 —— 就这两行
+    const when = document.createElement('span')
+    when.className = 'sm2-cruise__when'
+    when.textContent = whenOf(st)
+    panel.append(when)
     const title = document.createElement('span')
     title.className = 'sm2-cruise__title'
     title.textContent = st.title
     panel.append(title)
-    for (const [cls, text] of [
-      ['sm2-cruise__lead', st.lead],
-      ['sm2-cruise__role', st.role],
-      ['sm2-cruise__role', st.audience],
-    ] as const) {
-      if (!text) continue
-      const el = document.createElement('span')
-      el.className = cls
-      el.textContent = text
-      panel.append(el)
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -550,6 +605,7 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
 
   function tick(dtRaw: number): void {
     const dt = frozen ? 0 : Math.min(0.05, dtRaw)
+    clock += dt
 
     const moved = Math.hypot(px - lpx, py - lpy)
     lpx = px
@@ -557,59 +613,46 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     speed = speedTrack.push(moved / Math.max(1e-3, dtRaw), dt)
     tier = forcedTier !== null ? forcedTier : tierTrack.push(speed / speedBase, dt)
 
-    // 流速：指针越快，流得越快
-    const vz = V_BASE + speed * V_K
-    flow += vz * dt
+    // 流速：指针越快，流得越快 —— 快就是「掠过」
+    const v = V_BASE + speed * V_K
+    flow += v * dt
 
-    // 发射：每 SPACING 个相位发一个元素
-    while (flow - lastEmit >= SPACING) {
-      lastEmit += SPACING
-      if (!emitNext()) break
-      const k = live[live.length - 1]!.k
-      if (k !== seg) {
-        seg = k
-        shownStation = -1
-      }
-      preload(Math.min(N - 1, k + 1))
-    }
-
-    // 横向划过阈值 → 翻一站
-    if (Math.abs(scrubAcc) > SCRUB_PX) {
-      const dir = scrubAcc > 0 ? 1 : -1
-      scrubAcc = 0
-      moveTo(seg + dir)
-    }
-
-    // 光心跟着指针走
+    // 光心跟着指针走（带滞后，甩起来有惯性）
     const lag = 1 - Math.exp(-dt / 0.09)
     lx += (px - lx) * lag
     ly += (py - ly) * lag
 
-    // 离场：下一条出生了，上一条开始淡
-    for (let i = 0; i < live.length; i++) {
-      const el = live[i]!
-      const next = live[i + 1]
-      if (next && el.exit === 0) el.exit = next.born
+    // --- 发牌 ---
+    spawnAcc += moved
+    gapAcc += dt
+    let budget = MAX_EMIT
+    while (budget > 0) {
+      if (spawnAcc >= SPAWN_PX) spawnAcc -= SPAWN_PX
+      else if (gapAcc >= SPAWN_GAP) gapAcc -= SPAWN_GAP
+      else break
+      budget--
+      emit()
     }
+
+    // --- 离场 ---
     live = live.filter((el) => {
-      if (el.exit === 0) return true
-      const t = (flow - el.exit) / exitSpan(el)
-      return t < 1
+      if (el.exitT === null) return true
+      return clock - el.exitT < exitSpan(el)
     })
 
     // --- 画 ---
     ctx.fillStyle = '#04070e'
     ctx.fillRect(0, 0, W, H)
-    field.draw(ctx, W, H, lx, ly, dt, tier)
+    field.draw(ctx, W, H, lx, ly, dt, tier, flow)
 
-    // 元素：图先画，环后画（章名压在最上面）
+    // 照片先画，环后画（章名压在最上面）
     for (const el of live) {
       if (el.kind !== 'img') continue
       drawImage(el, alphaOf(el))
     }
     for (const el of live) {
-      if (el.kind !== 'ring') continue
-      drawRingElement(el, alphaOf(el))
+      if (el.kind !== 'hop') continue
+      drawHop(el, alphaOf(el))
     }
 
     drawZoom()
@@ -618,27 +661,51 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
 
     if (options.debug) {
       readout.textContent =
-        `第 ${String(seg + 1).padStart(2, '0')} 段 · 相位 ${flow.toFixed(0)} · 档 ${tier}\n` +
+        `第 ${String(seg + 1).padStart(2, '0')} 站 · 流 ${flow.toFixed(0)}px · 档 ${tier}\n` +
         `速度 ${speed.toFixed(0)}px/s · 在场 ${live.length} 个 · 光心 ${lx.toFixed(0)},${ly.toFixed(0)}\n` +
         live
           .map((el) => {
-            const s = place(el)
-            return `${el.kind === 'ring' ? '环' : '图'} #${el.k + 1} age${(flow - el.born).toFixed(0)} a${alphaOf(el).toFixed(2)} r${s.r.toFixed(0)}`
+            const s = el.kind === 'hop' ? placeHop(el) : placeImg(el)
+            return `${el.kind === 'hop' ? '环' : '图'} #${el.k + 1} age${(clock - el.bornT).toFixed(1)} a${alphaOf(el).toFixed(2)} r${s.r.toFixed(0)}`
           })
           .join('\n')
     }
   }
 
-  /** 元素的透明度：出生时 1，被下一条顶走后淡出 */
+  /** 元素的透明度 */
   function alphaOf(el: El): number {
-    if (el.exit === 0) return 1
-    const t = Math.min(1, Math.max(0, (flow - el.exit) / exitSpan(el)))
-    return 1 - t * t * (3 - 2 * t)
+    // 出生时淡入
+    let a = Math.min(1, (clock - el.bornT) / (el.kind === 'hop' ? 0.5 : 0.18))
+    if (el.exitT !== null) {
+      const t = Math.min(1, Math.max(0, (clock - el.exitT) / exitSpan(el)))
+      a *= 1 - smooth(t)
+    }
+    return a
   }
 
-  /** 离场要淡多久 —— 环淡得慢，标题得读得完 */
+  /** 离场要淡多久 */
   function exitSpan(el: El): number {
-    return el.kind === 'ring' ? EXIT_RING : EXIT_SPACING
+    return el.kind === 'hop' ? EXIT_HOP : EXIT_T
+  }
+
+  /**
+   * 文字单独的透明度。
+   *
+   * **同时只有一枚环带字** —— 旧章名环只剩圈，名字交给当前站那一枚。
+   * 快速操作时一口气跳过十几站，否则十几个站名会叠成一堆字。
+   */
+  function textAlphaOf(el: El): number {
+    const a = alphaOf(el)
+    if (el.exitT === null) return a
+    // 离场中：字在 exitDur 秒里慢慢化掉，圈继续淡
+    return a * (1 - smooth((clock - el.exitT) / el.exitDur))
+  }
+
+  /** 文字的模糊量：离场时慢慢化掉 */
+  function blurOf(el: El): number {
+    if (el.exitT === null) return 0
+    const t = Math.min(1, Math.max(0, (clock - el.exitT) / el.exitDur))
+    return 3.2 * smooth(t)
   }
 
   // -------------------------------------------------------------------------
@@ -647,8 +714,9 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
 
   seg = Math.max(0, Math.min(N - 1, options.startIndex ?? 0))
   cursorStation = seg
-  cursorImage = -1
-  lx = W * 0.5
+  cursorImage = 0
+  ringPending = true
+  lx = W * 0.42
   ly = H * 0.5
   px = lpx = lx
   py = lpy = ly
@@ -667,14 +735,13 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       const next = Math.max(0, Math.min(N - 1, index))
       seg = next
       cursorStation = next
-      cursorImage = -1
+      cursorImage = 0
+      ringPending = true
       live = []
-      flow = 0
-      lastEmit = -SPACING
-      angSeq = 0
       shownStation = -1
       zoomed = null
-      scrubAcc = 0
+      spawnAcc = 0
+      gapAcc = 0
       preload(next)
     },
     resize(w, h) {
@@ -708,12 +775,18 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
         speed,
         count: live.length,
         light: [lx, ly],
-        live: live.map((el) => ({
-          kind: el.kind,
-          k: el.k,
-          age: flow - el.born,
-          alpha: alphaOf(el),
-        })),
+        live: live.map((el) => {
+          const s = el.kind === 'hop' ? placeHop(el) : placeImg(el)
+          return {
+            kind: el.kind,
+            k: el.k,
+            age: clock - el.bornT,
+            alpha: alphaOf(el),
+            x: Math.round(s.x),
+            y: Math.round(s.y),
+            r: Math.round(s.r),
+          }
+        }),
         zoomed,
       }
     },
@@ -722,6 +795,21 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       texCache.clear()
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+
+/** 时间地点 —— 面板和环上用的是同一句 */
+function whenOf(st: Station): string {
+  const d = st.date ? st.date.replace(/-/g, '.') : ''
+  const p = st.short || st.place || ''
+  return [d, p].filter(Boolean).join(' · ')
+}
+
+/** 五次平滑：两头慢中间快 */
+function smooth(t: number): number {
+  const x = Math.min(1, Math.max(0, t))
+  return x * x * x * (x * (x * 6 - 15) + 10)
 }
 
 export type { Station }

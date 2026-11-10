@@ -156,6 +156,8 @@ export interface Badge {
   metaSize?: number
   /** 外弧的弧长上限 */
   titleSpan?: number
+  /** 内弧的弧长上限 */
+  metaSpan?: number
   /**
    * 时间地点摆哪条弧。
    *
@@ -163,16 +165,35 @@ export interface Badge {
    * - `outer`：环外下弧 —— 环心要留给别的东西飞过时用
    */
   metaOn?: 'inner' | 'outer'
+  /**
+   * 文字的模糊半径（px）。
+   *
+   * 环飞远的时候字要慢慢失焦 —— 不用 blur 滤镜也能做：
+   * 字号跟着缩、描边跟着淡，字就「化」掉了。
+   */
+  blur?: number
+  /**
+   * 文字单独的透明度（缺省跟环一样）。
+   *
+   * 一枚环可以「圈还在、字已经走了」——
+   * 旧的章名环只剩圈，名字交给当前站的那一枚。
+   */
+  textAlpha?: number
 }
 
 /** 画一枚环徽章：本体 + 外弧站名 + 时间地点 */
 export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
   if (b.alpha <= 0.02) return
   drawRingBody(ctx, b.cx, b.cy, b.r, b.alpha)
+  const textAlpha = b.textAlpha ?? b.alpha
+  if (textAlpha <= 0.02) return
   ctx.save()
-  ctx.globalAlpha = b.alpha
+  ctx.globalAlpha = textAlpha
   const titleSize = b.titleSize ?? Math.max(9, Math.min(48, b.r * 0.085))
   const metaSize = b.metaSize ?? Math.max(8, Math.min(28, b.r * 0.052))
+  // 模糊 = 字号缩小 + 描边变淡。字「化」掉，不是糊成一团。
+  const blur = b.blur ?? 0
+  const shrink = 1 - Math.min(0.45, blur * 0.14)
   arcText(
     ctx,
     b.title,
@@ -181,7 +202,7 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
     b.r * 1.1,
     -Math.PI / 2,
     1,
-    titleSize,
+    titleSize * shrink,
     RING_INK.title,
     RING_FONT,
     b.titleSpan ?? Math.PI * 0.62,
@@ -195,10 +216,10 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
     outer ? b.r * 1.12 : b.r * 0.89,
     Math.PI / 2,
     -1,
-    metaSize,
+    metaSize * shrink,
     RING_INK.meta,
     RING_FONT,
-    Math.PI * (outer ? 0.6 : 0.55),
+    b.metaSpan ?? Math.PI * (outer ? 0.6 : 0.55),
   )
   ctx.restore()
 }

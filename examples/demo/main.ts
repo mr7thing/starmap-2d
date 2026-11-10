@@ -156,10 +156,10 @@ function paintInner() {
     const c = journey.debug().cruise
     if (!c) return
     readout.textContent =
-      `第 ${String(c.seg + 1).padStart(2, '0')} 段 · 相位 ${c.flow.toFixed(0)} · 档 ${c.tier}\n` +
+      `第 ${String(c.seg + 1).padStart(2, '0')} 段 · 流 ${c.flow.toFixed(0)}px · 档 ${c.tier}\n` +
       `速度 ${c.speed.toFixed(0)}px/s · 在场 ${c.count} 个 · 光心 ${c.light[0].toFixed(0)},${c.light[1].toFixed(0)}\n` +
       c.live
-        .map((l) => `${l.kind === 'ring' ? '环' : '图'} #${l.k + 1} age${l.age.toFixed(0)} a${l.alpha.toFixed(2)}`)
+        .map((l) => `${l.kind === 'hop' ? '环' : '图'} #${l.k + 1} age${l.age.toFixed(1)} a${l.alpha.toFixed(2)}`)
         .join('\n')
     return
   }

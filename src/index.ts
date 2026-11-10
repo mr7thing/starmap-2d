@@ -107,10 +107,8 @@ const CSS = `
   width:min(260px,calc(100vw - 56px));display:flex;flex-direction:column;gap:7px;
   pointer-events:none;
 }
-.sm2-scene__no{font-size:10px;letter-spacing:.2em;color:#4f83b4}
-.sm2-scene__title{font-size:16px;line-height:1.4;color:#e4f3ff;margin-top:2px}
-.sm2-scene__lead{font-size:11.5px;line-height:1.75;color:#9dc2e0;margin-top:4px}
-.sm2-scene__role{font-size:10.5px;line-height:1.7;color:#6f9fc8}
+.sm2-scene__when{font-size:10.5px;letter-spacing:.14em;color:#5f93c2}
+.sm2-scene__title{font-size:16px;line-height:1.4;color:#e4f3ff;margin-top:4px}
 .sm2-scene__read{
   position:absolute;left:24px;bottom:20px;font-size:10px;line-height:1.85;color:#5b8cb8;
   white-space:pre;text-align:left;
@@ -132,10 +130,8 @@ const CSS = `
   pointer-events:none;
   align-items:flex-end;text-align:right;
 }
-.sm2-cruise__no{font-size:10px;letter-spacing:.2em;color:#4f83b4}
-.sm2-cruise__title{font-size:16px;line-height:1.4;color:#e4f3ff;margin-top:2px}
-.sm2-cruise__lead{font-size:11.5px;line-height:1.75;color:#9dc2e0;margin-top:4px}
-.sm2-cruise__role{font-size:10.5px;line-height:1.7;color:#6f9fc8}
+.sm2-cruise__when{font-size:10.5px;letter-spacing:.14em;color:#5f93c2}
+.sm2-cruise__title{font-size:16px;line-height:1.4;color:#e4f3ff;margin-top:4px}
 .sm2-cruise__read{
   position:absolute;left:24px;bottom:20px;font-size:10px;line-height:1.85;color:#5b8cb8;
   white-space:pre;text-align:left;

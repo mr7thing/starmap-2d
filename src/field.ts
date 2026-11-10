@@ -6,6 +6,12 @@
  * 抽出来是因为两个视图必须长得一样 —— 同一个光心、同一种扩散节奏。
  * 换视图就换质感，会让人以为换了个产品。
  *
+ * ## 光环与照片走同一条流
+ *
+ * 光环不是自己按秒长的 —— 它的半径由 `flow` 决定，
+ * 而 `flow` 就是二级光隧里照片飞出去的那条流。
+ * 所以光环和照片永远同步：照片往外飞，光圈就一圈圈涨开。
+ *
  * ## 确定性
  *
  * 没有 Math.random()：星尘用固定种子的 mulberry32，
@@ -15,13 +21,16 @@
 /** 黄金角：星尘复位时按它散开，才不会挤成一束 */
 const GOLDEN = 2.39996323
 
+/** 第一圈光环的半径 —— 照片也从这个半径出生 */
+export const HALO_R0 = 26
+/** 光环的间距（px） */
+export const HALO_GAP = 165
+/** 同时在场的圈数 */
+export const HALO_COUNT = 9
+/** 光环铺开的总跨度（px）—— 涨过这个数就从里圈重新开始 */
+export const HALO_SPAN = HALO_GAP * HALO_COUNT
+
 export interface FieldOptions {
-  /** 同心光环的间距（px） */
-  haloGap?: number
-  /** 同心光环的圈数 */
-  haloCount?: number
-  /** 光环向外涨的速度（px/s） */
-  haloSpeed?: number
   /** 星尘颗粒数（档 0 时的基础值） */
   dustCount?: number
   /** 星尘往外冲的速度 */
@@ -34,6 +43,7 @@ export interface Field {
    *
    * @param dt 这一帧过了多少秒（冻结时传 0）
    * @param tier 当前档位 0/1/2 —— 越快放出来的尘越多
+   * @param flow 流走过的距离（px）—— 光环按它涨开，和照片同流
    */
   draw(
     ctx: CanvasRenderingContext2D,
@@ -43,20 +53,13 @@ export interface Field {
     ly: number,
     dt: number,
     tier: number,
+    flow: number,
   ): void
 }
 
 export function createField(options: FieldOptions = {}): Field {
-  const haloGap = options.haloGap ?? 150
-  const haloCount = options.haloCount ?? 6
-  const haloSpeed = options.haloSpeed ?? 95
   const dustCount = options.dustCount ?? 240
   const dustSpeed = options.dustSpeed ?? 2.4
-
-  /** 光环向外涨到哪了（px） */
-  let phase = 0
-  /** 光环铺开的总跨度 */
-  const haloSpan = haloGap * haloCount
 
   // --- 星尘 ---
   const DUST: { ang: number; z: number; k: number }[] = (() => {
@@ -69,9 +72,7 @@ export function createField(options: FieldOptions = {}): Field {
   })()
 
   return {
-    draw(ctx, w, h, lx, ly, dt, tier) {
-      phase += dt * haloSpeed
-
+    draw(ctx, w, h, lx, ly, dt, tier, flow) {
       // --- 光心那团辉光 ---
       const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, Math.max(w, h) * 0.62)
       g.addColorStop(0, 'rgba(130,205,255,.22)')
@@ -82,10 +83,12 @@ export function createField(options: FieldOptions = {}): Field {
       ctx.fillRect(0, 0, w, h)
 
       // --- 同心光环：从光心一圈圈涨开，越远越淡 ---
+      // 半径由 flow 决定 —— 和照片飞出去的是同一条流。
+      const base = HALO_R0 + flow
       ctx.lineWidth = 1
-      for (let i = 0; i < haloCount; i++) {
-        const r = ((phase + i * haloGap) % haloSpan) + 30
-        const a = 0.24 * Math.pow(Math.max(0, 1 - r / haloSpan), 1.4)
+      for (let i = 0; i < HALO_COUNT; i++) {
+        const r = ((base + i * HALO_GAP) % HALO_SPAN) + 20
+        const a = 0.24 * Math.pow(Math.max(0, 1 - r / HALO_SPAN), 1.4)
         if (a <= 0.004) continue
         ctx.strokeStyle = `rgba(112,184,236,${a.toFixed(3)})`
         ctx.beginPath()
