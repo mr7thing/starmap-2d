@@ -29,13 +29,16 @@
  * ## 节奏：慢
  *
  * 全部按秒控制，不按「流相位」：
- * 胀大 0.9 秒、离场 3.6 秒、环离场 2.6 秒。
+ * 胀大 0.9 秒、照片离场 5 秒、环离场 8 秒。
  * 慢到能看清一张照片，再看它化掉。
  *
  * ## 章名环
  *
  * 每一站先飞出一枚环：**外弧是站名，内弧是时间地点**。
- * 这一站的照片全部飞完，环才开始淡出；下一站的环不等它淡完。
+ *
+ * 环涨的节奏和照片**完全一样**（同一条流），所以照片始终在环里面飞。
+ * 环一路涨到**满屏** —— 涨到把整块屏幕都套进去为止 —— 然后停在那儿，
+ * 再慢慢化掉。下一站的环不等它化完：名字交出去，圈留着继续涨。
  *
  * ## 确定性
  *
@@ -43,7 +46,7 @@
  * 素材按 manifest 的顺序取，同一站永远以同样的顺序出场。
  */
 
-import { drawBadge, type Badge } from './ring.ts'
+import { drawBadge, TITLE_OUT_K, type Badge } from './ring.ts'
 import { createField, HALO_R0 } from './field.ts'
 import { orderedImages, type ImageRef, type Manifest, type Station, type Tier } from './types.ts'
 import { SpeedTracker, TierTracker } from './window.ts'
@@ -75,8 +78,16 @@ const MAX_EMIT = 4
 const GROW_T = 0.9
 /** 照片离场要淡多久 —— 慢下来才看得清，也铺得开 */
 const EXIT_T = 5
-/** 章名环离场要淡多久 —— 跟照片一样慢，环要「化」很久才不见 */
-const EXIT_HOP = 5
+/** 慢档的环化时长（秒）—— 也是下标越界时的兜底 */
+const EXIT_HOP_SLOW = 8
+/**
+ * 章名环化掉要多久（秒），按档位。
+ *
+ * 慢 = 8 秒：环涨到满屏才停，停了再慢慢化 —— 「开到最大」那一刻才看得清。
+ * 快 = 1.5 秒：一口气跳过十几站，环要是也化那么慢，
+ * 屏幕上就叠着十几枚还没化完的同心圆。
+ */
+const EXIT_HOP = [EXIT_HOP_SLOW, 4, 1.5]
 /** 章名环上的字最多化多久 —— 化完了就只剩圈 */
 const TEXT_EXIT = 1.2
 /**
@@ -93,14 +104,15 @@ const IMG_H = 150
 /** 环的初始半径 —— 从这么大体量出场，字才读得清 */
 const HOP_R0 = 96
 /**
- * 环比照片慢多少 —— 慢一点，照片才追得上、穿得过去。
+ * 环比照片慢多少。
  *
- * 也别太快：环涨到出屏，站名就跟着看不见了。
+ * **1 = 跟照片一样快** —— 环从光心往外涨，涨的节奏和照片完全一致，
+ * 照片始终在环里面飞。
  */
-const HOP_K = 0.32
-/** 环上站名的字号 */
+const HOP_K = 1
+/** 环上站名的最小字号 */
 const HOP_TITLE = 14
-/** 环上时间地点的字号 */
+/** 环上时间地点的最小字号 */
 const HOP_META = 11
 
 /** 黄金角：照片的角度按它散开，围着光心才铺得匀 */
@@ -171,6 +183,12 @@ interface El {
   exitT: number | null
   /** 离场要淡多久（秒） */
   exitDur: number
+  /** 字什么时候开始化掉（秒），null = 字还在 */
+  textEndT: number | null
+  /** 字化开要多久（秒） */
+  textDur: number
+  /** 环涨到这么大就停（满屏），照片用不上 */
+  maxR: number
 }
 
 export function createCruise(manifest: Manifest, options: CruiseOptions = {}): CruiseView {
@@ -305,17 +323,30 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
   /**
    * 让一个元素开始离场。
    *
-   * **文字化开的时间跟这一站待了多久走**：
-   * 慢慢读的时候，站名要「慢慢模糊」；快速跳过的时候，站名就得赶紧走 ——
-   * 否则十几个站名会同时挂在屏幕上，叠成一堆字。
+   * 照片：被下一张顶走就走。
+   * 环：**涨到满屏**才走 —— 涨的时候它一直挂着，是这一站最亮的一个东西；
+   * 下一站的环来了也可以把它顶走（那样化得快些，屏幕上不会堆一叠圈）。
    */
   function startExit(el: El): void {
     if (el.exitT !== null) return
     el.exitT = clock
-    if (el.kind === 'hop') {
-      const lived = clock - el.bornT
-      el.exitDur = Math.max(0.35, Math.min(TEXT_EXIT, lived * 0.5))
-    }
+    el.exitDur = el.kind === 'hop' ? (EXIT_HOP[tier] ?? EXIT_HOP_SLOW) : EXIT_T
+  }
+
+  /**
+   * 把名字交出去。
+   *
+   * 下一站的环一出生，上一站的字就开始化 —— 但**圈留着**，
+   * 它继续涨，涨到满屏才停、才慢慢化掉。
+   *
+   * 化开的时间跟这一站待了多久走：慢慢读的时候名字慢慢糊，
+   * 快速跳过的时候名字赶紧走，不然十几个站名会同时挂在屏幕上。
+   */
+  function handOverText(el: El): void {
+    if (el.textEndT !== null) return
+    const lived = clock - el.bornT
+    el.textEndT = clock
+    el.textDur = Math.max(0.35, Math.min(TEXT_EXIT, lived * 0.5))
   }
 
   // -------------------------------------------------------------------------
@@ -342,9 +373,12 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       }
       if (ringPending) {
         ringPending = false
-        // 上一站的环开始离场 —— 下一站不等它淡完
+        // 上一站的环把名字交出去 —— 字化掉，圈也开始退场
         for (const el of live) {
-          if (el.kind === 'hop') startExit(el)
+          if (el.kind === 'hop') {
+            handOverText(el)
+            startExit(el)
+          }
         }
         live.push({
           kind: 'hop',
@@ -354,7 +388,10 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
           bornF: flow,
           ang: 0,
           exitT: null,
-          exitDur: EXIT_HOP,
+          exitDur: EXIT_HOP[tier] ?? EXIT_HOP_SLOW,
+          textEndT: null,
+          textDur: 0,
+          maxR: hopMaxR(),
         })
         seg = cursorStation
         shownStation = -1
@@ -378,6 +415,9 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
           ang: angSeq * GOLDEN,
           exitT: null,
           exitDur: EXIT_T,
+          textEndT: null,
+          textDur: 0,
+          maxR: 0,
         })
         angSeq++
         cursorImage++
@@ -496,9 +536,27 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     }
   }
 
-  /** 章名环现在在哪儿 —— 它套在光心上，照片从它里面穿出去 */
+  /**
+   * 环涨到多大算「满屏」。
+   *
+   * 环开到最大时，**连站名一起顶到屏幕边** ——
+   * 站名挂在环外 `TITLE_OUT_K` 倍处，所以环涨到那个位置就停。
+   *
+   * 环真占满屏幕的话，站名就没地方站了（环外 = 屏幕外），
+   * 所以「满屏」按「环 + 站名」这一整块算。
+   */
+  function hopMaxR(): number {
+    return Math.min(W, H) / 2 / TITLE_OUT_K
+  }
+
+  /**
+   * 章名环现在在哪儿 —— 它套在光心上，照片从它里面穿出去。
+   *
+   * 半径跟照片走**同一条流**（`HOP_K = 1`），涨到满屏就停住。
+   */
   function placeHop(el: El): Spot {
-    const r = HOP_R0 + Math.max(0, flow - el.bornF) * HOP_K
+    const raw = HOP_R0 + Math.max(0, flow - el.bornF) * HOP_K
+    const r = Math.min(el.maxR, raw)
     return { x: lx, y: ly, r, h: 0 }
   }
 
@@ -515,6 +573,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     const ar = t.naturalWidth / t.naturalHeight
     const h = s.h
     const w = h * ar
+    // 整张在屏幕外的就别画了 —— 快档下一半元素都飞到几千像素外
+    if (s.x + w / 2 < 0 || s.x - w / 2 > W || s.y + h / 2 < 0 || s.y - h / 2 > H) return
     // 飘到文字面板下面的图要淡出 —— 文字不能被照片压住
     const into = s.x + w / 2 - (panelLeft() - 24)
     const clip = into > 0 ? Math.max(0, 1 - into / (w * 0.5 + 40)) : 1
@@ -661,6 +721,13 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     }
 
     // --- 离场 ---
+    // 环涨到满屏就停住，然后才开始慢慢化掉
+    for (const el of live) {
+      if (el.kind !== 'hop') continue
+      // 光心动了，「满屏」的半径也跟着动 —— 只涨不缩，环才不会忽然缩回去
+      if (hopMaxR() > el.maxR) el.maxR = hopMaxR()
+      if (el.exitT === null && placeHop(el).r >= el.maxR - 0.5) startExit(el)
+    }
     live = live.filter((el) => {
       if (el.exitT === null) return true
       return clock - el.exitT < exitSpan(el)
@@ -711,26 +778,28 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
 
   /** 离场要淡多久 */
   function exitSpan(el: El): number {
-    return el.kind === 'hop' ? EXIT_HOP : EXIT_T
+    return el.exitDur
   }
 
   /**
    * 文字单独的透明度。
    *
-   * **同时只有一枚环带字** —— 旧章名环只剩圈，名字交给当前站那一枚。
-   * 快速操作时一口气跳过十几站，否则十几个站名会叠成一堆字。
+   * **同时只有一枚环带字** —— 旧章名环把名字交出去，只剩圈，
+   * 圈继续涨到满屏。名字交给当前站那一枚。
    */
   function textAlphaOf(el: El): number {
     const a = alphaOf(el)
-    if (el.exitT === null) return a
-    // 离场中：字在 exitDur 秒里慢慢化掉，圈继续淡
-    return a * (1 - smooth((clock - el.exitT) / el.exitDur))
+    if (el.kind === 'img') return a
+    if (el.textEndT === null) return a
+    // 名字交出去之后：在 textDur 秒里慢慢化掉
+    return a * (1 - smooth((clock - el.textEndT) / el.textDur))
   }
 
   /** 文字的模糊量：离场时慢慢化掉 */
   function blurOf(el: El): number {
-    if (el.exitT === null) return 0
-    const t = Math.min(1, Math.max(0, (clock - el.exitT) / el.exitDur))
+    if (el.kind === 'img') return 0
+    if (el.textEndT === null) return 0
+    const t = Math.min(1, Math.max(0, (clock - el.textEndT) / el.textDur))
     return 3.2 * smooth(t)
   }
 

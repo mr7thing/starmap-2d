@@ -33,6 +33,14 @@ export const RING_INK: RingInk = {
 
 export const RING_FONT = 'system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'
 
+/**
+ * 站名挂在环外的半径倍数。
+ *
+ * 「同一段环线之下」= 环外那么一圈 —— 名字站的地方。
+ * 二级光隧算「环能开多大」时也要用这个数（见 cruise.ts）。
+ */
+export const TITLE_OUT_K = 1.2
+
 /** 环本体：双圈 + 刻度。像一个仪表的表圈 */
 export function drawRingBody(
   ctx: CanvasRenderingContext2D,
@@ -221,7 +229,7 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
     b.title,
     b.cx,
     b.cy,
-    titleBottom ? b.r * 1.2 : b.r * 1.1,
+    titleBottom ? b.r * TITLE_OUT_K : b.r * 1.1,
     titleBottom ? Math.PI / 2 : -Math.PI / 2,
     titleBottom ? -1 : 1,
     titleSize * shrink,
