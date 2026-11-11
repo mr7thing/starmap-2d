@@ -1,15 +1,20 @@
 /**
  * 一级 · 环行场景 —— 一排环，一段旅程的总览。
  *
- * ## 一排环，不是一堆图
+ * ## 先叠着，再拉开
  *
- * 每一站一枚环，从左往右排开、间距拉得很宽。
- * **环里没有照片** —— 一级是索引，不是内容；照片留给二级。
+ * 默认进入时，**所有环叠在屏幕正中间** —— 只错开一点点，
+ * 看上去是一叠圈，而不是排开的一串。
+ *
+ * 指针一动，环就**一个一个拉开**：每一枚都有自己的时刻，
+ * 前一枚还没走完，后一枚才开始动 —— 不齐步走。
  *
  * ```
  *      ◎        ◎        ◎        ◎        ◎
  *   01 宣城   02 常州   03 成都   04 广美   05 太湖
  * ```
+ *
+ * **环里没有照片** —— 一级是索引，不是内容；照片留给二级。
  *
  * ## 光线随鼠标游动
  *
@@ -25,7 +30,8 @@
  *
  * ## 确定性
  *
- * 没有 Math.random()：星尘用固定种子的 mulberry32。
+ * 没有 Math.random()：星尘用固定种子的 mulberry32，
+ * 叠在一起时的错位也按固定的角度分布。
  */
 
 import { drawBadge, type Badge } from './ring.ts'
@@ -40,6 +46,20 @@ const RING_GAP = 320
 const RING_R = 104
 /** 当前站那一环放大的倍数 */
 const RING_CURRENT_K = 1.14
+
+// --- 叠着 → 拉开 ---
+/** 叠在一起时每枚环错开的方向（黄金角）—— 不用随机，保证可复现 */
+const GOLDEN = 2.39996323
+/** 叠在一起时错开多远（像素）—— 一点点，看得出是「一叠」而不是一个 */
+const STACK_JITTER = 16
+/** 叠在一起时压得多暗 —— 十几枚圈摞着，不能糊成一团白 */
+const STACK_ALPHA = 0.2
+/** 指针移动多少像素算「展开一环的量」 */
+const OPEN_PER_PX = 1 / 260
+/** 相邻两枚环错开多少才开始动 —— 一个一个来，不齐步走 */
+const OPEN_STAGGER = 0.55
+/** 一枚环从开始动到完全拉开要多少「环」 */
+const OPEN_SPAN = 0.9
 
 // --- 导航 ---
 /** 指针横向最多能把这一排拖偏几站 */
@@ -67,6 +87,8 @@ export interface SceneDebug {
   light: [number, number]
   /** 在场环 */
   rings: number
+  /** 展开进度（单位：枚环）—— 叠着时是 0 */
+  open: number
 }
 
 export interface SceneView {
@@ -143,6 +165,13 @@ export function createScene(
   let frozen = false
   /** 当前悬停在第几枚环（−1 = 没悬停） */
   let hovered = -1
+  /**
+   * 展开进度（单位：枚环）。
+   *
+   * 指针每移动一段距离就多累一点 —— 环据此一个一个拉开。
+   * 只增不减：拉开过就摆在那儿，不缩回去。
+   */
+  let openAcc = 0
 
   /** 光心（跟着指针走，带滞后） */
   let lx = 0
@@ -179,6 +208,13 @@ export function createScene(
     return Math.max(RING_R * 1.5, usable * 0.38)
   }
   function readY(): number {
+    return H * 0.5
+  }
+  /** 叠在一起时，那一叠环落在画幅的哪个位置 —— 画幅正中 */
+  function stackX(): number {
+    return W * 0.5
+  }
+  function stackY(): number {
     return H * 0.5
   }
 
@@ -271,12 +307,26 @@ export function createScene(
     r: number
     alpha: number
     current: boolean
+    /** 展开度 0～1 —— 0 = 还叠着，1 = 已经排开了 */
+    open: number
   }
 
   /** 第 k 枚环现在在哪儿 */
   function ringAt(k: number): RingSpot | null {
-    const dx = (k - scroll) * RING_GAP
-    const cx = readX() + dx
+    const rowX = readX() + (k - scroll) * RING_GAP
+    const rowY = readY()
+
+    // 叠着的时候：所有环都在正中央，只按固定角度错开一点点
+    const a = k * GOLDEN
+    const stackCX = stackX() + Math.cos(a) * STACK_JITTER
+    const stackCY = stackY() + Math.sin(a) * STACK_JITTER
+
+    // 展开度：环一个一个来 —— 前一枚还没走完，后一枚才动
+    const p = clamp01((openAcc - k * OPEN_STAGGER) / OPEN_SPAN)
+    const ease = p * p * (3 - 2 * p)
+
+    const cx = stackCX + (rowX - stackCX) * ease
+    const cy = stackCY + (rowY - stackCY) * ease
     if (cx < -RING_R * 2 || cx > W + RING_R * 2) {
       arrivedAt.delete(k)
       return null
@@ -286,15 +336,17 @@ export function createScene(
     const born = arrivedAt.get(k)
     if (born === undefined) arrivedAt.set(k, clock)
     const grow = Math.min(1, (clock - (born ?? clock)) / 0.55)
-    const ease = grow * grow * (3 - 2 * grow)
-    const r = RING_R * (current ? RING_CURRENT_K : 1) * (0.42 + 0.58 * ease)
+    const arrive = grow * grow * (3 - 2 * grow)
+    const r = RING_R * (current ? RING_CURRENT_K : 1) * (0.42 + 0.58 * arrive)
     // 离得越远越暗 —— 但别暗到看不见，读者得数得出有几站
     const dist = Math.abs(k - scroll)
-    let alpha = Math.max(0.34, 1 - dist * 0.2) * (current ? 1 : 0.82) * ease
+    // 叠着的时候压暗 —— 十几枚圈摞着，得看出是「一叠」而不是一团白
+    const stackFade = STACK_ALPHA + (1 - STACK_ALPHA) * ease
+    let alpha = Math.max(0.34, 1 - dist * 0.2) * (current ? 1 : 0.82) * arrive * stackFade
     // 滚到文字面板下面的环要淡出 —— 文字不能被环压住
     const into = cx + r - (panelLeft() - 24)
     if (into > 0) alpha *= Math.max(0, 1 - into / (r * 1.6))
-    return { k, cx, cy: readY(), r, alpha, current }
+    return { k, cx, cy, r, alpha, current, open: ease }
   }
 
   // -------------------------------------------------------------------------
@@ -309,6 +361,8 @@ export function createScene(
     const moved = Math.hypot(px - lpx, py - lpy)
     lpx = px
     lpy = py
+    // 指针一动，环就一个一个拉开 —— 挪得越多，开得越快
+    if (pointerIn) openAcc += moved * OPEN_PER_PX
     const speed = speedTrack.push(moved / Math.max(1e-3, dtRaw), dt)
     tier =
       forcedTier !== null
@@ -354,6 +408,9 @@ export function createScene(
         titleOn: 'bottom',
         // 环和字都加粗 —— 跟背景那些装饰环分得开
         bold: true,
+        // 叠着的时候不出字 —— 十几组字摞在一起是一团浆糊，
+        // 环拉开之后字才一个一个浮出来
+        textAlpha: s.alpha * s.open,
       }
       drawBadge(ctx, badge)
     }
@@ -366,7 +423,7 @@ export function createScene(
     if (options.debug) {
       readout.textContent =
         `第 ${String(index + 1).padStart(2, '0')} 站 · 整排 ${scroll.toFixed(2)} · 档 ${tier}\n` +
-        `速度 ${speed.toFixed(0)}px/s · 光心 ${lx.toFixed(0)},${ly.toFixed(0)}`
+        `速度 ${speed.toFixed(0)}px/s · 光心 ${lx.toFixed(0)},${ly.toFixed(0)} · 展开 ${openAcc.toFixed(2)}`
     }
   }
 
@@ -423,8 +480,9 @@ export function createScene(
 
   index = 0
   scroll = 0
-  lx = readX()
-  ly = readY()
+  // 开场时环还叠在正中央 —— 光心也得在那儿，否则底下的光晕缩在一边
+  lx = stackX()
+  ly = stackY()
   px = lpx = lx
   py = lpy = ly
 
@@ -435,8 +493,8 @@ export function createScene(
       const next = Math.max(0, Math.min(N - 1, i))
       index = next
       scroll = next
-      // 整排重排，所有环重新涨一遍
-      arrivedAt.clear()
+      // 只让落到的那一枚重新涨一遍 —— 已经摊开的环不该跟着重播进场
+      arrivedAt.delete(next)
       shownStation = -1
     },
     resize(w, h) {
@@ -448,8 +506,8 @@ export function createScene(
       canvas.style.width = `${W}px`
       canvas.style.height = `${H}px`
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
-      lx = readX()
-      ly = readY()
+      lx = stackX()
+      ly = stackY()
       px = lpx = lx
       py = lpy = ly
     },
@@ -470,6 +528,7 @@ export function createScene(
         speed: speedTrack.value,
         light: [lx, ly],
         rings: stations.length,
+        open: openAcc,
       }
     },
     dispose() {
@@ -487,4 +546,9 @@ function whenOf(st: Station): string {
   const d = st.date ? st.date.replace(/-/g, '.') : ''
   const p = st.short || st.place || ''
   return [d, p].filter(Boolean).join(' · ')
+}
+
+/** 掐到 0～1 */
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v
 }

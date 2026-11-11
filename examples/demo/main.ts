@@ -42,7 +42,7 @@ const journey = createJourney(stage, manifest, {
   },
   onBackToScene() {
     document.body.dataset.view = 'scene'
-    setHint('点击任意一枚环进入光隧')
+    setHint('晃动鼠标展开环 · 点击进入光隧')
   },
 })
 
