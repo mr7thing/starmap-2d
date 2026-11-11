@@ -6,6 +6,9 @@
  * 默认进入时，**所有环按原来的顺序叠在屏幕正中间** —— 间距被压到 9px，
  * 一枚一枚错开，每一枚露出前面那枚的一点边。
  *
+ * 但**只有前四五层看得清**：再往后的暗到看不见 —— 十三层全摞在一处
+ * 只会糊成一片。环展开的时候，那些暗掉的才一个个显出来。
+ *
  * 指针一动，环就**一个一个拉开**：每一枚都有自己的时刻，
  * 前一枚还没走完，后一枚才开始动 —— 不齐步走。
  *
@@ -55,8 +58,22 @@ const RING_CURRENT_K = 1.14
  * 一枚一枚错开，每一枚露出前面那枚的一点边，数得出有几层。
  */
 const STACK_GAP = 9
-/** 叠在一起时压得多暗 —— 十三枚圈摞着，不能糊成一团白 */
-const STACK_ALPHA = 0.2
+/**
+ * 叠在一起时压得多暗。
+ *
+ * 不是所有层一个亮度 —— 那样十三层全摞在一处只会糊成一片。
+ * 前面几层露出来，后面的暗到看不见；环展开了，它们才一个个显出来。
+ */
+const STACK_ALPHA = 0.55
+/**
+ * 叠着的时候看得清的有几层。
+ *
+ * 再往后的按层递减，暗到看不见 —— 读者看到的是「四五层」，
+ * 不是「十三层」。
+ */
+const STACK_LAYERS = 5
+/** 再往后一层，暗掉多少 */
+const STACK_FADE = 0.25
 /** 指针移动多少像素算「展开一环的量」 */
 const OPEN_PER_PX = 1 / 260
 /** 相邻两枚环错开多少才开始动 —— 一个一个来，不齐步走 */
@@ -343,9 +360,14 @@ export function createScene(
     const r = RING_R * (current ? RING_CURRENT_K : 1) * (0.42 + 0.58 * arrive)
     // 离得越远越暗 —— 但别暗到看不见，读者得数得出有几站
     const dist = Math.abs(k - scroll)
-    // 叠着的时候压暗 —— 十几枚圈摞着，得看出是「一叠」而不是一团白
-    const stackFade = STACK_ALPHA + (1 - STACK_ALPHA) * ease
-    let alpha = Math.max(0.34, 1 - dist * 0.2) * (current ? 1 : 0.82) * arrive * stackFade
+    const posAlpha = Math.max(0.34, 1 - dist * 0.2) * (current ? 1 : 0.82)
+    // 叠着的时候：前面几层看得清，后面的暗到看不见；
+    // 展开的时候这一层一层的影响被冲掉，暗掉的环重新显出来
+    const stackVis =
+      k < STACK_LAYERS ? 1 : Math.max(0, 1 - (k - STACK_LAYERS + 1) * STACK_FADE)
+    const vis = stackVis + (1 - stackVis) * ease
+    const dim = STACK_ALPHA + (1 - STACK_ALPHA) * ease
+    let alpha = posAlpha * dim * vis * arrive
     // 滚到文字面板下面的环要淡出 —— 文字不能被环压住
     const into = cx + r - (panelLeft() - 24)
     if (into > 0) alpha *= Math.max(0, 1 - into / (r * 1.6))
