@@ -396,7 +396,7 @@ export function createJourney(
 export { validateManifest, ManifestError } from './types.ts'
 export type { Manifest, Station, ImageRef, Tier } from './types.ts'
 export { TierTracker, SpeedTracker } from './window.ts'
-export { drawBadge, arcText, drawRingBody, RING_INK } from './ring.ts'
+export { drawBadge, arcText, drawRingBody, mixInk, RING_INK, RING_INK_COOL } from './ring.ts'
 export type { Badge, RingInk } from './ring.ts'
 export type { CruiseOptions as CruiseConfig, CruiseDebug as CruiseState }
 export type { SceneOptions as SceneConfig, SceneDebug as SceneState }

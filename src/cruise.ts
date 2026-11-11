@@ -40,7 +40,14 @@
  *
  * 环涨的节奏和照片**完全一样**（同一条流），所以照片始终在环里面飞。
  * 环一路涨到**满屏** —— 涨到把整块屏幕都套进去为止 —— 然后停在那儿，
- * 把站名亮到这一站结束，再慢慢化掉。
+ * 把站名亮到这一站结束，再**换个颜色淡掉**。
+ *
+ * 环刚出来的时候**在最上层闪一下** —— 一路走过去，得让人注意到又到了一站。
+ *
+ * ## 离场只做「变色 + 变淡」
+ *
+ * **不做虚化**。`ctx.filter` 的 blur 每一帧都要重采样整块画布，
+ * 屏上环一多就卡成幻灯片。换色只是算几个数字，不花钱。
  *
  * ## 确定性
  *
@@ -48,7 +55,7 @@
  * 素材按 manifest 的顺序取，同一站永远以同样的顺序出场。
  */
 
-import { badgeType, drawBadge, TITLE_OUT_K, type Badge } from './ring.ts'
+import { badgeType, drawBadge, mixInk, RING_INK, RING_INK_COOL, TITLE_OUT_K, type Badge } from './ring.ts'
 import { createField, HALO_R0 } from './field.ts'
 import { orderedImages, type ImageRef, type Manifest, type Station, type Tier } from './types.ts'
 import { SpeedTracker, TierTracker } from './window.ts'
@@ -111,7 +118,7 @@ const TEXT_EXIT = 1.2
  */
 const STATION_GAP = [1, 0.6, 0.3]
 /** 照片最终多大（高，px） */
-const IMG_H = 150
+const IMG_H = 225
 
 // --- 章名环 ---
 /** 环的初始半径 —— 从这么大体量出场，字才读得清 */
@@ -123,6 +130,13 @@ const HOP_R0 = 96
  * 照片始终在环里面飞。
  */
 const HOP_K = 1
+/**
+ * 环出场时那一下光的时长（秒）。
+ *
+ * **每站的信息环出来都闪一下** —— 不闪的话，环从光心悄悄涨开，
+ * 一路走过去没人注意到又到了一站。
+ */
+const FLASH_T = 1.3
 
 /** 黄金角：照片的角度按它散开，围着光心才铺得匀 */
 const GOLDEN = 2.39996323
@@ -625,9 +639,84 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       // 旧环的字先化掉 —— 同时只有一枚环带字，名字才不会叠成一堆
       textAlpha: textAlphaOf(el),
       // 离场时字慢慢「化」掉
-      blur: blurOf(el),
+      haze: hazeOf(el),
+      // 离场时换色：冰蓝褪成靛青
+      ink: mixInk(RING_INK, RING_INK_COOL, coolOf(el)),
     }
+    // 离场：涨到满屏就停住，**不缩小** —— 换个颜色淡掉，像一层光凉在空气里
     drawBadge(ctx, badge)
+  }
+
+  /**
+   * 环出场时那一下闪光的强度（0～1）。
+   *
+   * 起手一下就亮到顶，然后散掉 —— 是「闪」，不是「亮着」。
+   */
+  function flashOf(el: El): number {
+    if (el.kind !== 'hop') return 0
+    const age = clock - el.bornT
+    if (age < 0 || age > FLASH_T) return 0
+    const t = age / FLASH_T
+    // 起手一下就亮到顶（0.22 秒），然后慢慢散
+    const rise = smooth(Math.min(1, age / 0.22))
+    return (1 - t) * (1 - t) * (0.35 + 0.65 * rise)
+  }
+
+  /**
+   * 环出场的那一下：辉光 + 往外推的一圈。
+   *
+   * 画在**最上层** —— 这一下就是给人看的，压在照片上面才抓得住眼睛。
+   */
+  function drawHopFlash(el: El): void {
+    const f = flashOf(el)
+    if (f <= 0.01) return
+    const s = placeHop(el)
+    ctx.save()
+    // 辉光：粗的一层光晕
+    ctx.globalAlpha = f * 0.75
+    ctx.strokeStyle = 'rgba(120,205,255,.6)'
+    ctx.lineWidth = 9
+    ctx.shadowBlur = 30
+    ctx.shadowColor = 'rgba(130,215,255,.95)'
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+    ctx.stroke()
+    // 亮芯 —— 环刚出来那一刻，它就是这一道白光
+    ctx.globalAlpha = f
+    ctx.strokeStyle = 'rgba(235,251,255,.98)'
+    ctx.lineWidth = 1.8
+    ctx.shadowBlur = 10
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2)
+    ctx.stroke()
+    // 往外推出去的一圈
+    ctx.globalAlpha = f * 0.5
+    ctx.lineWidth = 1.4
+    ctx.shadowBlur = 14
+    ctx.strokeStyle = 'rgba(190,235,255,.9)'
+    ctx.beginPath()
+    ctx.arc(s.x, s.y, s.r + (1 - f) * 60, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  /**
+   * 离场时墨色往「冷」那边走多少（0～1）。
+   *
+   * 环涨到满屏就停住 —— **不再缩小**，只是**变色 + 变淡**：
+   * 冰蓝褪成靛青，再淡没。
+   *
+   * **不做虚化**：`ctx.filter` 每一帧都要把整块画布重采样，
+   * 屏上环一多就卡成幻灯片。换色只是算几个数字，白给的。
+   *
+   * **变色比淡出快** —— 颜色得先冷下来，才看得见它冷下来了；
+   * 跟淡出同步的话，环只是「暗掉」，看不出换过色。
+   */
+  function coolOf(el: El): number {
+    if (el.kind !== 'hop') return 0
+    if (el.exitT === null) return 0
+    const t = Math.min(1, Math.max(0, (clock - el.exitT) / exitSpan(el)))
+    return smooth(Math.min(1, t * 2))
   }
 
   function drawZoom(): void {
@@ -760,6 +849,11 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       if (el.kind !== 'hop') continue
       drawHop(el, alphaOf(el))
     }
+    // 环出场的那一下 —— 压在最上层
+    for (const el of live) {
+      if (el.kind !== 'hop') continue
+      drawHopFlash(el)
+    }
 
     drawZoom()
     drawCursor()
@@ -808,8 +902,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     return a * (1 - smooth((clock - el.textEndT) / el.textDur))
   }
 
-  /** 文字的模糊量：离场时慢慢化掉 */
-  function blurOf(el: El): number {
+  /** 字的化开程度：离场时字号缩一点、整体淡掉（不是滤镜） */
+  function hazeOf(el: El): number {
     if (el.kind === 'img') return 0
     if (el.textEndT === null) return 0
     const t = Math.min(1, Math.max(0, (clock - el.textEndT) / el.textDur))

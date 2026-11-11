@@ -31,6 +31,66 @@ export const RING_INK: RingInk = {
   meta: 'rgba(178,224,255,.95)',
 }
 
+/**
+ * 冷掉的墨色 —— 环离场时褪成它。
+ *
+ * **不做虚化**：虚化（`ctx.filter`）一帧要几十毫秒，屏上环一多就卡。
+ * 换色 + 变淡是纯算术，一帧的价钱可以忽略。
+ *
+ * 冰蓝 → 靛青：像光在隧道里凉下去。
+ */
+export const RING_INK_COOL: RingInk = {
+  body: 'rgba(98,112,182,.55)',
+  inner: 'rgba(80,94,152,.22)',
+  tick: 'rgba(72,86,134,.2)',
+  tickLong: 'rgba(106,122,192,.38)',
+  title: 'rgba(152,160,216,.62)',
+  meta: 'rgba(122,140,202,.62)',
+}
+
+/** rgba 字符串的解析结果 —— 同一套墨色会被解析很多次，记一次 */
+const inkCache = new Map<string, [number, number, number, number]>()
+
+function parseInk(s: string): [number, number, number, number] {
+  const hit = inkCache.get(s)
+  if (hit) return hit
+  const m = /rgba?\(([^)]+)\)/.exec(s)
+  const parts = (m?.[1] ?? s).split(',').map((v) => Number(v.trim()))
+  const v: [number, number, number, number] = [
+    parts[0] ?? 0,
+    parts[1] ?? 0,
+    parts[2] ?? 0,
+    parts[3] ?? 1,
+  ]
+  inkCache.set(s, v)
+  return v
+}
+
+/**
+ * 两套墨色之间插值（`k = 0` 取 a，`k = 1` 取 b）。
+ *
+ * 只做算术，不碰画布 —— 换色不该比画一个环更贵。
+ */
+export function mixInk(a: RingInk, b: RingInk, k: number): RingInk {
+  if (k <= 0) return a
+  if (k >= 1) return b
+  const one = (key: keyof RingInk): string => {
+    const ca = parseInk(a[key])
+    const cb = parseInk(b[key])
+    const ch = (i: 0 | 1 | 2): number => Math.round(ca[i] + (cb[i] - ca[i]) * k)
+    const alpha = ca[3] + (cb[3] - ca[3]) * k
+    return `rgba(${ch(0)},${ch(1)},${ch(2)},${alpha.toFixed(3)})`
+  }
+  return {
+    body: one('body'),
+    inner: one('inner'),
+    tick: one('tick'),
+    tickLong: one('tickLong'),
+    title: one('title'),
+    meta: one('meta'),
+  }
+}
+
 export const RING_FONT = 'system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif'
 
 /**
@@ -67,17 +127,19 @@ export function drawRingBody(
   alpha: number,
   /** 线宽倍率 —— 章名环要粗一档，才能跟背景装饰环分开 */
   weight = 1,
+  /** 墨色（缺省用 RING_INK） */
+  ink: RingInk = RING_INK,
 ): void {
   if (alpha <= 0.02 || r <= 2) return
   ctx.save()
   ctx.globalAlpha = alpha
   ctx.lineWidth = 1.6 * weight
-  ctx.strokeStyle = RING_INK.body
+  ctx.strokeStyle = ink.body
   ctx.beginPath()
   ctx.arc(cx, cy, r, 0, Math.PI * 2)
   ctx.stroke()
   ctx.lineWidth = 1 * weight
-  ctx.strokeStyle = RING_INK.inner
+  ctx.strokeStyle = ink.inner
   ctx.beginPath()
   ctx.arc(cx, cy, r * 0.955, 0, Math.PI * 2)
   ctx.stroke()
@@ -88,7 +150,7 @@ export function drawRingBody(
     const t = (i / ticks) * Math.PI * 2
     const long = i % (ticks / 12) === 0
     const len = long ? 11 : 5
-    ctx.strokeStyle = long ? RING_INK.tickLong : RING_INK.tick
+    ctx.strokeStyle = long ? ink.tickLong : ink.tick
     ctx.lineWidth = 1 * weight
     ctx.beginPath()
     ctx.moveTo(cx + Math.cos(t) * (r - len / 2), cy + Math.sin(t) * (r - len / 2))
@@ -195,12 +257,12 @@ export interface Badge {
    */
   metaOn?: 'inner' | 'outer'
   /**
-   * 文字的模糊半径（px）。
+   * 字的「化开」程度（任意量，0 = 不化）。
    *
-   * 环飞远的时候字要慢慢失焦 —— 不用 blur 滤镜也能做：
-   * 字号跟着缩、描边跟着淡，字就「化」掉了。
+   * **不是滤镜** —— 字号跟着缩、描边跟着淡，字就化掉了。
+   * 离场只做这件事，不上 blur（那个一帧要重采样整块画布）。
    */
-  blur?: number
+  haze?: number
   /**
    * 文字单独的透明度（缺省跟环一样）。
    *
@@ -222,22 +284,29 @@ export interface Badge {
    * 哪个是站名、哪个是装饰，看不出来。
    */
   bold?: boolean
+  /**
+   * 墨色（缺省用 RING_INK）。
+   *
+   * 离场时换色用：环从冰蓝褪成靛青，再淡掉。
+   */
+  ink?: RingInk
 }
 
 /** 画一枚环徽章：本体 + 站名 + 时间地点 */
 export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
   if (b.alpha <= 0.02) return
   const bold = b.bold === true
-  drawRingBody(ctx, b.cx, b.cy, b.r, b.alpha, bold ? 1.7 : 1)
+  const ink = b.ink ?? RING_INK
+  drawRingBody(ctx, b.cx, b.cy, b.r, b.alpha, bold ? 1.7 : 1, ink)
   const textAlpha = b.textAlpha ?? b.alpha
   if (textAlpha <= 0.02) return
   ctx.save()
   ctx.globalAlpha = textAlpha
   const titleSize = b.titleSize ?? Math.max(9, Math.min(48, b.r * 0.085))
   const metaSize = b.metaSize ?? Math.max(8, Math.min(28, b.r * 0.052))
-  // 模糊 = 字号缩小 + 描边变淡。字「化」掉，不是糊成一团。
-  const blur = b.blur ?? 0
-  const shrink = 1 - Math.min(0.45, blur * 0.14)
+  // 化开 = 字号缩小 + 描边变淡。字「化」掉，不是糊成一团。
+  const haze = b.haze ?? 0
+  const shrink = 1 - Math.min(0.45, haze * 0.14)
   const weight = bold ? 700 : 400
   // 站名：默认在环外上弧；'bottom' 时落到环外下弧（时间地点的下面）
   const titleBottom = b.titleOn === 'bottom'
@@ -250,7 +319,7 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
     titleBottom ? Math.PI / 2 : -Math.PI / 2,
     titleBottom ? -1 : 1,
     titleSize * shrink,
-    RING_INK.title,
+    ink.title,
     RING_FONT,
     b.titleSpan ?? Math.PI * 0.62,
     weight,
@@ -265,7 +334,7 @@ export function drawBadge(ctx: CanvasRenderingContext2D, b: Badge): void {
     Math.PI / 2,
     -1,
     metaSize * shrink,
-    RING_INK.meta,
+    ink.meta,
     RING_FONT,
     b.metaSpan ?? Math.PI * (outer ? 0.6 : 0.55),
     weight,

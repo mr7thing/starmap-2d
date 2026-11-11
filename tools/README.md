@@ -59,6 +59,36 @@ node tools/probe.mjs <url> <探针文件> [等多少毫秒]
 | `probe-drag-canvas.mjs` | 在二级光隧里模拟拖动 —— 发牌靠指针位移，静止截图看不到 |
 | `probe-drag-state.mjs` | 拖动之后把在场元素的**真实坐标**读出来（看数不看图） |
 | `probe-stations.mjs` | 站与站之间空没空一拍 —— 量上一站最后一张活了多久 |
+| `probe-fps.mjs` | 三秒画了多少帧 —— 量 `ctx.filter` 之类的开销 |
+| `probe-ring-color.mjs` | 环离场时颜色怎么变 —— 读画布像素，出一串 RGB |
+| `probe-ring-profile.mjs` | 环线内外 12px 的颜色剖面 —— 定位笔画在哪一格 |
+| `probe-ink.mjs` | 在**干净画布**上单独画一枚环，验墨色换色真的生效 |
+
+> 取色有坑：巡航画面里有照片、有背景光环、还有字，
+> 单点取色十有八九取到的不是环。
+> `probe-ink.mjs` 单独画一枚环做对照，那才是干净的。
+
+## 卡住某一刻
+
+`freeze-at.mjs` 是**页面脚本**，给 `shot.mjs` 用（用 `@` 指向文件）：
+
+```
+node tools/shot.mjs "http://127.0.0.1:4203/?cruise=1&mode=flash" out.png 2000 @tools/freeze-at.mjs
+node tools/shot.mjs "http://127.0.0.1:4203/?cruise=1&mode=exit&exitAlpha=0.35" out.png 2000 @tools/freeze-at.mjs
+```
+
+| 参数 | 卡在哪 |
+|---|---|
+| `mode=flash` | 环刚出生那一下（辉光最亮） |
+| `mode=exit` | 环涨到满屏、正在离场时（`exitAlpha` 决定淡到多少） |
+
+**headless 窗口小，环涨到满屏很快** —— 新环会立刻把旧环盖住，
+离场那几秒什么都看不见。验离场要用大窗口：
+
+```
+msedge --headless=new --remote-debugging-port=9334 --window-size=1600,1000 ...
+$env:CDP_PORT='9334'; node tools/shot.mjs ...
+```
 
 ## 配套
 
