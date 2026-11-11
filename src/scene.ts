@@ -3,8 +3,8 @@
  *
  * ## 先叠着，再拉开
  *
- * 默认进入时，**所有环叠在屏幕正中间** —— 只错开一点点，
- * 看上去是一叠圈，而不是排开的一串。
+ * 默认进入时，**所有环按原来的顺序叠在屏幕正中间** —— 间距被压到 9px，
+ * 一枚一枚错开，每一枚露出前面那枚的一点边。
  *
  * 指针一动，环就**一个一个拉开**：每一枚都有自己的时刻，
  * 前一枚还没走完，后一枚才开始动 —— 不齐步走。
@@ -48,11 +48,14 @@ const RING_R = 104
 const RING_CURRENT_K = 1.14
 
 // --- 叠着 → 拉开 ---
-/** 叠在一起时每枚环错开的方向（黄金角）—— 不用随机，保证可复现 */
-const GOLDEN = 2.39996323
-/** 叠在一起时错开多远（像素）—— 一点点，看得出是「一叠」而不是一个 */
-const STACK_JITTER = 16
-/** 叠在一起时压得多暗 —— 十几枚圈摞着，不能糊成一团白 */
+/**
+ * 叠在一起时，相邻两枚环错开多远（像素）。
+ *
+ * **不是乱叠** —— 顺序照旧，只是把一排的间距从 320 压到这么点：
+ * 一枚一枚错开，每一枚露出前面那枚的一点边，数得出有几层。
+ */
+const STACK_GAP = 9
+/** 叠在一起时压得多暗 —— 十三枚圈摞着，不能糊成一团白 */
 const STACK_ALPHA = 0.2
 /** 指针移动多少像素算「展开一环的量」 */
 const OPEN_PER_PX = 1 / 260
@@ -217,6 +220,10 @@ export function createScene(
   function stackY(): number {
     return H * 0.5
   }
+  /** 叠着的时候第一枚环的位置 —— 让整叠居中在画幅正中 */
+  function stackOrigin(): number {
+    return stackX() - ((N - 1) / 2) * STACK_GAP
+  }
 
   // -------------------------------------------------------------------------
   // 交互
@@ -313,20 +320,16 @@ export function createScene(
 
   /** 第 k 枚环现在在哪儿 */
   function ringAt(k: number): RingSpot | null {
-    const rowX = readX() + (k - scroll) * RING_GAP
-    const rowY = readY()
-
-    // 叠着的时候：所有环都在正中央，只按固定角度错开一点点
-    const a = k * GOLDEN
-    const stackCX = stackX() + Math.cos(a) * STACK_JITTER
-    const stackCY = stackY() + Math.sin(a) * STACK_JITTER
-
     // 展开度：环一个一个来 —— 前一枚还没走完，后一枚才动
     const p = clamp01((openAcc - k * OPEN_STAGGER) / OPEN_SPAN)
     const ease = p * p * (3 - 2 * p)
 
-    const cx = stackCX + (rowX - stackCX) * ease
-    const cy = stackCY + (rowY - stackCY) * ease
+    // 叠着的时候：一排的间距压到 9px —— 一个一个错开，各露一点边
+    const stackCX = stackOrigin() + k * STACK_GAP
+    // 拉开之后：回到原来那一排，间距 320
+    const rowCX = readX() + (k - scroll) * RING_GAP
+    const cx = stackCX + (rowCX - stackCX) * ease
+    const cy = readY()
     if (cx < -RING_R * 2 || cx > W + RING_R * 2) {
       arrivedAt.delete(k)
       return null
