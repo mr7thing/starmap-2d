@@ -24,8 +24,15 @@ export interface Station {
   /** ISO 日期，排序唯一依据 */
   date?: string
   end?: string
+  /** 场馆全名 —— 学校、博物馆、公司。给详情用，不上环 */
   place?: string
-  /** 图上标注用的短地名。缺省用 `place` —— 海图上标注的是地点，不是活动名 */
+  /**
+   * 显示用的地点 —— **城市名**。
+   *
+   * 环上、站点列表都用它：读者先知道「在哪座城」，再读名称。
+   * 学校名、场馆全名不进这里 —— 那些进站名（`title`），以「·」区隔。
+   * 缺省用 `place`。
+   */
   short?: string
   role?: string
   audience?: string
