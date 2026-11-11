@@ -348,21 +348,30 @@ export function createScene(
     { passive: false },
   )
 
-  /** 点到了第几枚环（−1 = 没点中） */
+  /**
+   * 点到了第几枚环（−1 = 没点中）。
+   *
+   * **环上的字也算数。** 站名挂在环外（环下 1.2r 处），光靠圈是点不着的 ——
+   * 所以下半圈放宽到 1.42r，那一段弧上站着「年·月 · 地点」和站名，
+   * 点字跟点圈一样进站。
+   *
+   * **谁在最上层，谁拿走这次点击。** 叠着的时候当前站那枚画在最上面，
+   * 按圆心最近算会点到隔壁那枚去 —— 看着是一叠，点下去却是另一站。
+   */
   function hitRing(x: number, y: number): number {
-    let best = -1
-    let bd = 1e9
-    for (let k = 0; k < N; k++) {
+    // 绘制顺序：当前站那枚最后画（最上层），其余按站号从前往后
+    const order: number[] = [index]
+    for (let k = 0; k < N; k++) if (k !== index) order.push(k)
+    for (const k of order) {
       const s = ringAt(k)
       if (!s) continue
-      const d = Math.hypot(x - s.cx, y - s.cy)
-      const tol = s.r + 14
-      if (d < tol && d < bd) {
-        bd = d
-        best = k
-      }
+      const dy = y - s.cy
+      const d = Math.hypot(x - s.cx, dy)
+      // 圈本身 r + 14；下半圈（文字所在的那段弧）放宽
+      const tol = dy > 0 ? s.r * 1.42 : s.r + 14
+      if (d < tol) return k
     }
-    return best
+    return -1
   }
 
   function moveTo(k: number): void {

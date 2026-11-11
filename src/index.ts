@@ -135,7 +135,14 @@ const CSS = `
   padding:3px 0;color:#7ea6cf;
   transition:color .2s ease;
   text-shadow:0 0 4px #04070e,0 0 9px #04070e;
+  position:relative;
 }
+/* 这一行点得进去 —— 悬停时右边出个箭头，别让人以为只是文字 */
+.sm2-scene__item::after{
+  content:'›';position:absolute;right:1px;top:50%;transform:translateY(-50%);
+  opacity:0;color:#5f93c2;transition:opacity .18s ease;
+}
+.sm2-scene__item:hover::after{opacity:1}
 .sm2-scene__item:hover{color:#e4f3ff}
 .sm2-scene__item[data-current="1"]{color:#e4f3ff}
 .sm2-scene__item em{
