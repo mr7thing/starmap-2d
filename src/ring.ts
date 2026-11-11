@@ -41,6 +41,23 @@ export const RING_FONT = 'system-ui,-apple-system,"PingFang SC","Microsoft YaHei
  */
 export const TITLE_OUT_K = 1.2
 
+/**
+ * 环上两行字的式样 —— 一级场景和二级章名环共用这一套。
+ *
+ * **环上是「年·月 · 地点」，环下是名称。**
+ *
+ * 时间地点是坐标：走到哪一年、哪个城市，读的时候它是主角，字大。
+ * 名称是注脚：这一站叫什么，小一号，挂在下面。
+ *
+ * 字号跟着环的半径走 —— 环涨大，字跟着涨，比例不变。
+ */
+export function badgeType(r: number): { meta: number; title: number } {
+  return {
+    meta: Math.max(10, Math.min(26, r * 0.135)),
+    title: Math.max(9, Math.min(18, r * 0.11)),
+  }
+}
+
 /** 环本体：双圈 + 刻度。像一个仪表的表圈 */
 export function drawRingBody(
   ctx: CanvasRenderingContext2D,

@@ -6,8 +6,10 @@
  * 默认进入时，**所有环按原来的顺序叠在屏幕正中间** —— 间距被压到 18px，
  * 一枚一枚错开，每一枚露出前面那枚的一点边。
  *
- * 但**只有前四五层看得清**：再往后的暗到看不见 —— 十三层全摞在一处
+ * 但**只有前四五层看得清**：再往后的暗下去 —— 十三层全摞在一处
  * 只会糊成一片。环展开的时候，那些暗掉的才一个个显出来。
+ *
+ * 再往后也不是全灭：留一点底，压在最里面的那几枚还认得出是环。
  *
  * 指针一动，环就**一个一个拉开**：每一枚都有自己的时刻，
  * 前一枚还没走完，后一枚才开始动 —— 不齐步走。
@@ -22,9 +24,12 @@
  * 环跟二级光隧的章名环一个分工：**站名和时间地点长在环上**，
  * 不靠旁边那张列表撑着。
  *
- * 叠着的时候只有**当前站那一枚**带字 —— 它是牌堆最上面那张，
- * 亮着、压着最上层，名字直接读。其余的等拉开再一个一个浮出来：
- * 十三组字摞在一起是一团浆糊，谁也读不出来。
+ * **环上是「年·月 · 地点」，环下是名称** —— 跟二级光隧一模一样：
+ * 时间地点是坐标，是主角；名称是注脚，小一号挂在下面。
+ *
+ * 叠着的时候**每一枚都带着字**，只是压在后面的暗到看不清：
+ * 那一叠看着像一摞写好了名字的卡片。当前站那一枚最亮、压在最上层，
+ * 名字直接读。
  *
  * **环里没有照片** —— 一级是索引，不是内容；照片留给二级。
  *
@@ -46,7 +51,7 @@
  * 叠在一起时的错位也按固定的角度分布。
  */
 
-import { drawBadge, type Badge } from './ring.ts'
+import { badgeType, drawBadge, type Badge } from './ring.ts'
 import { createField } from './field.ts'
 import type { Manifest, Station, Tier } from './types.ts'
 import { SpeedTracker, TierTracker } from './window.ts'
@@ -83,6 +88,13 @@ const STACK_ALPHA = 0.55
 const STACK_LAYERS = 5
 /** 再往后一层，暗掉多少 */
 const STACK_FADE = 0.25
+/**
+ * 压到最里面那几枚还留多少。
+ *
+ * 不是全灭 —— 那一叠看着像一摞写好了名字的卡片，
+ * 压在最底下的也还认得出是个环（只是看不清写了什么）。
+ */
+const STACK_FLOOR = 0.18
 /** 指针移动多少像素算「展开一环的量」 */
 const OPEN_PER_PX = 1 / 260
 /** 相邻两枚环错开多少才开始动 —— 一个一个来，不齐步走 */
@@ -415,7 +427,9 @@ export function createScene(
     // 叠着的时候：前面几层看得清，后面的暗到看不见；
     // 展开的时候这一层一层的影响被冲掉，暗掉的环重新显出来
     const stackVis =
-      k < STACK_LAYERS ? 1 : Math.max(0, 1 - (k - STACK_LAYERS + 1) * STACK_FADE)
+      k < STACK_LAYERS
+        ? 1
+        : Math.max(STACK_FLOOR, 1 - (k - STACK_LAYERS + 1) * STACK_FADE)
     // 当前站那一枚不吃层压制，也不吃叠合压暗 ——
     // 它是牌堆最上面那张：得亮，得有名，别的都躲在它后头
     const vis = current ? 1 : stackVis + (1 - stackVis) * ease
@@ -436,6 +450,8 @@ export function createScene(
     const s = ringAt(k)
     if (!s) return
     const st = stations[k]!
+    // 环上两行字跟二级光隧共用一套式样：时间地点大、名称小
+    const type = badgeType(s.r)
     const badge: Badge = {
       cx: s.cx,
       cy: s.cy,
@@ -443,8 +459,8 @@ export function createScene(
       alpha: s.alpha,
       title: st.title,
       meta: whenOf(st),
-      titleSize: Math.max(11, Math.min(26, s.r * 0.115)),
-      metaSize: Math.max(9, Math.min(18, s.r * 0.068)),
+      titleSize: type.title,
+      metaSize: type.meta,
       // 站名往往很长，外弧留得宽些，字才不用缩到看不清
       titleSpan: Math.PI * 0.9,
       metaSpan: Math.PI * 0.7,
@@ -452,9 +468,8 @@ export function createScene(
       titleOn: 'bottom',
       // 环和字都加粗 —— 跟背景那些装饰环分得开
       bold: true,
-      // 环上一直有字：叠着的时候当前站那一枚带着名字站在最前面，
-      // 其余的等拉开再浮出来（十三组字摞在一起是一团浆糊）
-      textAlpha: s.current ? s.alpha : s.alpha * s.open,
+      // 每一枚都带字 —— 压在后面的暗到看不清，但都在
+      textAlpha: s.alpha,
     }
     drawBadge(ctx, badge)
   }

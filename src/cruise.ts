@@ -48,7 +48,7 @@
  * 素材按 manifest 的顺序取，同一站永远以同样的顺序出场。
  */
 
-import { drawBadge, TITLE_OUT_K, type Badge } from './ring.ts'
+import { badgeType, drawBadge, TITLE_OUT_K, type Badge } from './ring.ts'
 import { createField, HALO_R0 } from './field.ts'
 import { orderedImages, type ImageRef, type Manifest, type Station, type Tier } from './types.ts'
 import { SpeedTracker, TierTracker } from './window.ts'
@@ -123,10 +123,6 @@ const HOP_R0 = 96
  * 照片始终在环里面飞。
  */
 const HOP_K = 1
-/** 环上站名的最小字号 */
-const HOP_TITLE = 14
-/** 环上时间地点的最小字号 */
-const HOP_META = 11
 
 /** 黄金角：照片的角度按它散开，围着光心才铺得匀 */
 const GOLDEN = 2.39996323
@@ -607,6 +603,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
     const st = stations[el.k]
     if (!st) return
     const s = placeHop(el)
+    // 环上两行字跟一级场景共用一套式样：时间地点大、名称小
+    const type = badgeType(s.r)
     const badge: Badge = {
       cx: s.x,
       cy: s.y,
@@ -614,8 +612,8 @@ export function createCruise(manifest: Manifest, options: CruiseOptions = {}): C
       alpha,
       title: st.title,
       meta: whenOf(st),
-      titleSize: HOP_TITLE,
-      metaSize: HOP_META,
+      titleSize: type.title,
+      metaSize: type.meta,
       // 外弧留得宽 —— 站名往往很长
       titleSpan: Math.PI * 1.05,
       metaSpan: Math.PI * 0.8,
