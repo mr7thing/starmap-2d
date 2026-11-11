@@ -105,11 +105,44 @@ const CSS = `
 /* 文字块在环的右边：环往左排，右边空出来给文字 */
 .sm2-scene__panel{
   position:absolute;right:28px;top:50%;transform:translateY(-50%);
-  width:min(260px,calc(100vw - 56px));display:flex;flex-direction:column;gap:7px;
+  width:min(300px,calc(100vw - 56px));
+  display:flex;flex-direction:column;gap:12px;
   pointer-events:none;
+  max-height:calc(100vh - 72px);
 }
-.sm2-scene__when{font-size:10.5px;letter-spacing:.14em;color:#5f93c2}
-.sm2-scene__title{font-size:16px;line-height:1.4;color:#e4f3ff;margin-top:4px}
+/* 整体介绍：不是当前这一环的 */
+.sm2-scene__intro{
+  flex:0 0 auto;font-size:11px;letter-spacing:.2em;color:#6f9fc8;
+  /* 环的弧线会从字底下穿过去 —— 描一圈暗晕，字才压得住（不是底板） */
+  text-shadow:0 0 4px #04070e,0 0 9px #04070e;
+}
+/* 所有站点 —— 跟着环的展开一条条显出来 */
+.sm2-scene__list{
+  list-style:none;margin:0;padding:0 6px 0 0;
+  overflow-y:auto;overscroll-behavior:contain;min-height:0;
+  pointer-events:auto;
+  display:flex;flex-direction:column;gap:1px;
+  scrollbar-width:thin;scrollbar-color:rgba(110,160,205,.32) transparent;
+}
+.sm2-scene__list::-webkit-scrollbar{width:4px}
+.sm2-scene__list::-webkit-scrollbar-track{background:transparent}
+.sm2-scene__list::-webkit-scrollbar-thumb{
+  background:rgba(110,160,205,.32);border-radius:2px;
+}
+.sm2-scene__item{
+  display:block;width:100%;text-align:left;border:0;background:none;
+  font:inherit;font-size:12px;line-height:1.4;cursor:pointer;
+  padding:3px 0;color:#7ea6cf;
+  transition:color .2s ease;
+  text-shadow:0 0 4px #04070e,0 0 9px #04070e;
+}
+.sm2-scene__item:hover{color:#e4f3ff}
+.sm2-scene__item[data-current="1"]{color:#e4f3ff}
+.sm2-scene__item em{
+  font-style:normal;color:#4f7fa8;margin-right:.5em;
+  font-variant-numeric:tabular-nums;
+}
+.sm2-scene__item[data-current="1"] em{color:#6f9fc8}
 .sm2-scene__read{
   position:absolute;left:24px;bottom:20px;font-size:10px;line-height:1.85;color:#5b8cb8;
   white-space:pre;text-align:left;

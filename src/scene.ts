@@ -57,7 +57,7 @@ const RING_CURRENT_K = 1.14
  * **不是乱叠** —— 顺序照旧，只是把一排的间距从 320 压到这么点：
  * 一枚一枚错开，每一枚露出前面那枚的一点边，数得出有几层。
  */
-const STACK_GAP = 9
+const STACK_GAP = 18
 /**
  * 叠在一起时压得多暗。
  *
@@ -156,6 +156,35 @@ export function createScene(
 
   const panel = document.createElement('div')
   panel.className = 'sm2-scene__panel sm2-panel'
+
+  /**
+   * 面板不是「当前这一环的介绍」—— 是整个内容的介绍。
+   *
+   * 上面一句总述，下面列出**所有**站点。
+   * 列表跟着环的展开走：环开到第几站，列表就显到第几站。
+   */
+  const intro = document.createElement('div')
+  intro.className = 'sm2-scene__intro'
+  intro.textContent = '部分培训剪辑'
+
+  const list = document.createElement('ol')
+  list.className = 'sm2-scene__list'
+
+  const items: HTMLButtonElement[] = stations.map((st, k) => {
+    const li = document.createElement('li')
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'sm2-scene__item'
+    const when = document.createElement('em')
+    when.textContent = st.date ? st.date.replace(/-/g, '.') : ''
+    btn.append(when, document.createTextNode(st.title))
+    btn.addEventListener('click', () => handlers.onPick?.(k))
+    li.append(btn)
+    list.append(li)
+    return btn
+  })
+
+  panel.append(intro, list)
 
   const readout = document.createElement('div')
   readout.className = 'sm2-scene__read'
@@ -317,7 +346,6 @@ export function createScene(
     index = next
     // 新的一枚要涨进来 —— 进场动画重新走一遍
     arrivedAt.delete(next)
-    shownStation = -1
   }
 
   // -------------------------------------------------------------------------
@@ -335,11 +363,21 @@ export function createScene(
     open: number
   }
 
+  /**
+   * 第 k 枚环展开到几分（0～1）。
+   *
+   * 环一个一个来 —— 前一枚还没走完，后一枚才动。
+   * 面板里的站点列表跟着它走：环开到哪，列表就显到哪。
+   */
+  function openOf(k: number): number {
+    const p = clamp01((openAcc - k * OPEN_STAGGER) / OPEN_SPAN)
+    return p * p * (3 - 2 * p)
+  }
+
   /** 第 k 枚环现在在哪儿 */
   function ringAt(k: number): RingSpot | null {
     // 展开度：环一个一个来 —— 前一枚还没走完，后一枚才动
-    const p = clamp01((openAcc - k * OPEN_STAGGER) / OPEN_SPAN)
-    const ease = p * p * (3 - 2 * p)
+    const ease = openOf(k)
 
     // 叠着的时候：一排的间距压到 9px —— 一个一个错开，各露一点边
     const stackCX = stackOrigin() + k * STACK_GAP
@@ -443,7 +481,7 @@ export function createScene(
     drawVignette()
     drawCursor()
 
-    updatePanel()
+    updateList()
 
     if (options.debug) {
       readout.textContent =
@@ -481,22 +519,45 @@ export function createScene(
   // 面板
   // -------------------------------------------------------------------------
 
-  let shownStation = -1
-  function updatePanel(): void {
-    if (shownStation === index) return
-    shownStation = index
-    const st = stations[index]
-    if (!st) return
-    panel.replaceChildren()
-    // 第一行是时间地点，下面是站名 —— 就这两行
-    const when = document.createElement('span')
-    when.className = 'sm2-scene__when'
-    when.textContent = whenOf(st)
-    panel.append(when)
-    const title = document.createElement('span')
-    title.className = 'sm2-scene__title'
-    title.textContent = st.title
-    panel.append(title)
+  /** 列表项上一次写入的可见度 —— 变了才动 DOM */
+  const lastVis: number[] = []
+  /** 列表跟着展开往下走吗 —— 用户手动滚过就停，滚回底部才恢复 */
+  let followList = true
+  list.addEventListener('scroll', () => {
+    followList = list.scrollTop + list.clientHeight >= list.scrollHeight - 6
+  })
+  /** 上一次有几条显着 */
+  let lastVisible = -1
+
+  /**
+   * 站点列表跟着环的展开走。
+   *
+   * 环开到第几站，列表就显到第几站 —— 读者看着环散开，
+   * 站点一条条浮出来，列表也跟着往下走。
+   */
+  function updateList(): void {
+    let visible = 0
+    for (let k = 0; k < N; k++) {
+      const vis = openOf(k)
+      if (vis > 0.02) visible++
+      if (lastVis[k] === vis) continue
+      lastVis[k] = vis
+      const el = items[k]!
+      if (vis > 0.02) {
+        el.style.display = ''
+        el.style.opacity = String(vis)
+        el.style.transform = `translateY(${((1 - vis) * 5).toFixed(2)}px)`
+      } else {
+        el.style.display = 'none'
+      }
+    }
+    // 当前站亮一下
+    for (let k = 0; k < N; k++) {
+      const cur = k === index ? '1' : '0'
+      if (items[k]!.dataset.current !== cur) items[k]!.dataset.current = cur
+    }
+    if (followList && visible !== lastVisible) list.scrollTop = list.scrollHeight
+    lastVisible = visible
   }
 
   // -------------------------------------------------------------------------
@@ -520,7 +581,6 @@ export function createScene(
       scroll = next
       // 只让落到的那一枚重新涨一遍 —— 已经摊开的环不该跟着重播进场
       arrivedAt.delete(next)
-      shownStation = -1
     },
     resize(w, h) {
       W = Math.max(1, w)
