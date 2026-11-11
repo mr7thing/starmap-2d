@@ -3,7 +3,7 @@
  *
  * ## 先叠着，再拉开
  *
- * 默认进入时，**所有环按原来的顺序叠在屏幕正中间** —— 间距被压到 9px，
+ * 默认进入时，**所有环按原来的顺序叠在屏幕正中间** —— 间距被压到 18px，
  * 一枚一枚错开，每一枚露出前面那枚的一点边。
  *
  * 但**只有前四五层看得清**：再往后的暗到看不见 —— 十三层全摞在一处
@@ -16,6 +16,15 @@
  *      ◎        ◎        ◎        ◎        ◎
  *   01 宣城   02 常州   03 成都   04 广美   05 太湖
  * ```
+ *
+ * ## 环上一直有字
+ *
+ * 环跟二级光隧的章名环一个分工：**站名和时间地点长在环上**，
+ * 不靠旁边那张列表撑着。
+ *
+ * 叠着的时候只有**当前站那一枚**带字 —— 它是牌堆最上面那张，
+ * 亮着、压着最上层，名字直接读。其余的等拉开再一个一个浮出来：
+ * 十三组字摞在一起是一团浆糊，谁也读不出来。
  *
  * **环里没有照片** —— 一级是索引，不是内容；照片留给二级。
  *
@@ -175,9 +184,13 @@ export function createScene(
     const btn = document.createElement('button')
     btn.type = 'button'
     btn.className = 'sm2-scene__item'
+    // 列表只给时间地点 —— 站名交给环，跟二级光隧一个分工
     const when = document.createElement('em')
     when.textContent = st.date ? st.date.replace(/-/g, '.') : ''
-    btn.append(when, document.createTextNode(st.title))
+    const where = document.createElement('span')
+    where.textContent = st.short || st.place || ''
+    if (when.textContent) btn.append(when)
+    btn.append(where)
     btn.addEventListener('click', () => handlers.onPick?.(k))
     li.append(btn)
     list.append(li)
@@ -403,8 +416,10 @@ export function createScene(
     // 展开的时候这一层一层的影响被冲掉，暗掉的环重新显出来
     const stackVis =
       k < STACK_LAYERS ? 1 : Math.max(0, 1 - (k - STACK_LAYERS + 1) * STACK_FADE)
-    const vis = stackVis + (1 - stackVis) * ease
-    const dim = STACK_ALPHA + (1 - STACK_ALPHA) * ease
+    // 当前站那一枚不吃层压制，也不吃叠合压暗 ——
+    // 它是牌堆最上面那张：得亮，得有名，别的都躲在它后头
+    const vis = current ? 1 : stackVis + (1 - stackVis) * ease
+    const dim = current ? 1 : STACK_ALPHA + (1 - STACK_ALPHA) * ease
     let alpha = posAlpha * dim * vis * arrive
     // 滚到文字面板下面的环要淡出 —— 文字不能被环压住
     const into = cx + r - (panelLeft() - 24)
@@ -415,6 +430,34 @@ export function createScene(
   // -------------------------------------------------------------------------
   // 帧
   // -------------------------------------------------------------------------
+
+  /** 画第 k 枚环 —— 本体 + 站名 + 时间地点 */
+  function drawRingSpot(k: number): void {
+    const s = ringAt(k)
+    if (!s) return
+    const st = stations[k]!
+    const badge: Badge = {
+      cx: s.cx,
+      cy: s.cy,
+      r: s.r,
+      alpha: s.alpha,
+      title: st.title,
+      meta: whenOf(st),
+      titleSize: Math.max(11, Math.min(26, s.r * 0.115)),
+      metaSize: Math.max(9, Math.min(18, s.r * 0.068)),
+      // 站名往往很长，外弧留得宽些，字才不用缩到看不清
+      titleSpan: Math.PI * 0.9,
+      metaSpan: Math.PI * 0.7,
+      // 时间地点在环上，站名在同一段环线的下面（跟二级光隧一致）
+      titleOn: 'bottom',
+      // 环和字都加粗 —— 跟背景那些装饰环分得开
+      bold: true,
+      // 环上一直有字：叠着的时候当前站那一枚带着名字站在最前面，
+      // 其余的等拉开再浮出来（十三组字摞在一起是一团浆糊）
+      textAlpha: s.current ? s.alpha : s.alpha * s.open,
+    }
+    drawBadge(ctx, badge)
+  }
 
   function tick(dtRaw: number): void {
     const dt = frozen ? 0 : Math.min(0.05, dtRaw)
@@ -450,33 +493,13 @@ export function createScene(
     ctx.fillRect(0, 0, W, H)
     field.draw(ctx, W, H, lx, ly, dt, tier, flow)
 
-    // 环：从远到近画
+    // 环：从远到近画。当前站那一枚压到最上层 ——
+    // 叠着的时候它是牌堆最前那张，字得在最上面才读得出来
     for (let k = N - 1; k >= 0; k--) {
-      const s = ringAt(k)
-      if (!s) continue
-      const st = stations[k]!
-      const badge: Badge = {
-        cx: s.cx,
-        cy: s.cy,
-        r: s.r,
-        alpha: s.alpha,
-        title: st.title,
-        meta: whenOf(st),
-        titleSize: Math.max(11, Math.min(26, s.r * 0.115)),
-        metaSize: Math.max(9, Math.min(18, s.r * 0.068)),
-        // 站名往往很长，外弧留得宽些，字才不用缩到看不清
-        titleSpan: Math.PI * 0.9,
-        metaSpan: Math.PI * 0.7,
-        // 时间地点在环上，站名在同一段环线的下面（跟二级光隧一致）
-        titleOn: 'bottom',
-        // 环和字都加粗 —— 跟背景那些装饰环分得开
-        bold: true,
-        // 叠着的时候不出字 —— 十几组字摞在一起是一团浆糊，
-        // 环拉开之后字才一个一个浮出来
-        textAlpha: s.alpha * s.open,
-      }
-      drawBadge(ctx, badge)
+      if (k === index) continue
+      drawRingSpot(k)
     }
+    drawRingSpot(index)
 
     drawVignette()
     drawCursor()
@@ -519,45 +542,54 @@ export function createScene(
   // 面板
   // -------------------------------------------------------------------------
 
-  /** 列表项上一次写入的可见度 —— 变了才动 DOM */
-  const lastVis: number[] = []
-  /** 列表跟着展开往下走吗 —— 用户手动滚过就停，滚回底部才恢复 */
+  /**
+   * 列表跟着环的展开往下走吗 —— 用户自己滚走了就停，滚回来再跟上。
+   */
   let followList = true
+  /** 上一次跟着到第几站 */
+  let lastFront = -1
+
   list.addEventListener('scroll', () => {
-    followList = list.scrollTop + list.clientHeight >= list.scrollHeight - 6
+    // 用户自己滚了就别再拽回去；滚回环指的位置就重新跟上
+    followList = Math.abs(list.scrollTop - anchorTop(frontOf())) <= 6
   })
-  /** 上一次有几条显着 */
-  let lastVisible = -1
+
+  /** 开到第几站了 —— 最后一枚开始动的环 */
+  function frontOf(): number {
+    let front = 0
+    for (let k = 0; k < N; k++) if (openOf(k) > 0.02) front = k
+    return front
+  }
+
+  /** 列表该滚到哪儿 —— 第 k 站停在列表中间 */
+  function anchorTop(k: number): number {
+    const el = items[k]
+    if (!el) return 0
+    const er = el.getBoundingClientRect()
+    const lr = list.getBoundingClientRect()
+    const target = list.scrollTop + (er.top - lr.top) - (list.clientHeight - er.height) / 2
+    const max = Math.max(0, list.scrollHeight - list.clientHeight)
+    return Math.max(0, Math.min(max, target))
+  }
 
   /**
-   * 站点列表跟着环的展开走。
+   * 站点列表。
    *
-   * 环开到第几站，列表就显到第几站 —— 读者看着环散开，
-   * 站点一条条浮出来，列表也跟着往下走。
+   * **全部站点一直在列** —— 每条只给时间 · 地点，站名长在环上。
+   * 当前站亮着；环开出去的时候列表跟着往下走，环开到第几站，
+   * 列表就看到第几站。
    */
   function updateList(): void {
-    let visible = 0
-    for (let k = 0; k < N; k++) {
-      const vis = openOf(k)
-      if (vis > 0.02) visible++
-      if (lastVis[k] === vis) continue
-      lastVis[k] = vis
-      const el = items[k]!
-      if (vis > 0.02) {
-        el.style.display = ''
-        el.style.opacity = String(vis)
-        el.style.transform = `translateY(${((1 - vis) * 5).toFixed(2)}px)`
-      } else {
-        el.style.display = 'none'
-      }
-    }
     // 当前站亮一下
     for (let k = 0; k < N; k++) {
       const cur = k === index ? '1' : '0'
       if (items[k]!.dataset.current !== cur) items[k]!.dataset.current = cur
     }
-    if (followList && visible !== lastVisible) list.scrollTop = list.scrollHeight
-    lastVisible = visible
+    const front = frontOf()
+    if (front === lastFront) return
+    lastFront = front
+    if (!followList) return
+    list.scrollTop = anchorTop(front)
   }
 
   // -------------------------------------------------------------------------
