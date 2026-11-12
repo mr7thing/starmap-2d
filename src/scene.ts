@@ -186,7 +186,8 @@ export function createScene(
    */
   const intro = document.createElement('div')
   intro.className = 'sm2-scene__intro'
-  intro.textContent = '部分培训剪辑'
+  // 清单的 title 是给宿主的总述位；不给才用库里的默认话术
+  intro.textContent = manifest.title ?? '部分培训剪辑'
 
   const list = document.createElement('ol')
   list.className = 'sm2-scene__list'
